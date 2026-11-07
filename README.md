@@ -25,8 +25,7 @@ Outras permissões: `CAIXA` (suprimento/saída avulsa, criar caixas) e `ADMIN` (
 
 ```bash
 npm install
-cp .env.example .env          # ajuste AUTH_SECRET (openssl rand -base64 32)
-docker compose up -d          # Postgres local (ou aponte DATABASE_URL para o seu) 
+cp .env.example .env          # preencha DATABASE_URL (Neon) e AUTH_SECRET (openssl rand -base64 32)
 npx prisma migrate dev --name init
 npm run db:seed               # cria admin, categorias e "Caixa Principal"
 npm run dev                   # http://localhost:3000

@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+  // Busca as relações (include) numa única consulta com JOIN, em vez de uma ida ao banco por relação.
+  previewFeatures = ["relationJoins"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Permission {
+  LANCAR
+  APROVAR
+  PAGAR
+  CAIXA
+  ADMIN
+}
+
+enum AccountStatus {
+  PENDENTE
+  APROVADA
+  REJEITADA
+  PAGA
+  CANCELADA
+}
+
+enum MovementType {
+  ENTRADA
+  SAIDA
+}
+
+enum AttachmentKind {
+  PEDIDO
+  NOTA_FISCAL
+  BOLETO
+}
+
+model User {
+  id           String       @id @default(cuid())
+  name         String
+  email        String       @unique
+  passwordHash String
+  permissions  Permission[]
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+
+  created      Account[]      @relation("CreatedBy")
+  reviewed     Account[]      @relation("ReviewedBy")
+  paid         Account[]      @relation("PaidBy")
+  rejections   Rejection[]
+  edits        AccountEdit[]
+  accountNotes AccountNote[]
+  canceled     Account[]      @relation("CanceledBy")
+  movements    CashMovement[]
+}
+
+enum PersonType {
+  CNPJ
+  CPF
+}
+
+model Supplier {
+  id              String     @id @default(cuid())
+  /// Empresa (razão social) ou nome da pessoa.
+  name            String     @unique
+  personType      PersonType @default(CNPJ)
+  /// CNPJ ou CPF, só dígitos.
+  document        String?
+  active          Boolean    @default(true)
+  zipCode         String?
+  state           String?
+  city            String?
+  address         String?
+  number          String?
+  district        String?
+  /// Telefones (só dígitos): empresa, financeiro e comercial.
+  phoneCompany    String?
+  phoneFinance    String?
+  phoneCommercial String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @default(now()) @updatedAt
+  accounts        Account[]
+
+  @@index([document])
+}
+
+model Category {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  active   Boolean   @default(true)
+  accounts Account[]
+}
+
+model Account {
+  id          String        @id @default(cuid())
+  code        Int           @unique @default(autoincrement())
+  description String
+  supplierId  String
+  categoryId  String?
+  amount      Decimal       @db.Decimal(14, 2)
+  dueDate     DateTime      @db.Date
+  notes       String?
+  status      AccountStatus @default(PENDENTE)
+
+  createdById String
+  createdAt   DateTime @default(now())
+
+  reviewedById    String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  paidById         String?
+  paidAt           DateTime?
+  paymentReference String?
+
+  canceledById   String?
+  canceledAt     DateTime?
+  cancelReason   String?
+  cashRegisterId String?
+
+  supplier     Supplier      @relation(fields: [supplierId], references: [id])
+  category     Category?     @relation(fields: [categoryId], references: [id])
+  createdBy    User          @relation("CreatedBy", fields: [createdById], references: [id])
+  reviewedBy   User?         @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  paidBy       User?         @relation("PaidBy", fields: [paidById], references: [id])
+  canceledBy   User?         @relation("CanceledBy", fields: [canceledById], references: [id])
+  cashRegister CashRegister? @relation(fields: [cashRegisterId], references: [id])
+  cashMovement CashMovement?
+  rejections   Rejection[]
+  edits        AccountEdit[]
+  attachments  Attachment[]
+  extraNotes   AccountNote[]
+
+  @@index([status, dueDate])
+}
+
+/// Arquivos PDF anexados à conta (pedido e boletos), guardados no próprio banco.
+model Attachment {
+  id         String         @id @default(cuid())
+  accountId  String
+  kind       AttachmentKind
+  fileName   String
+  size       Int
+  // PDF no AWS S3 (chave do objeto). Anexos antigos podem ainda ter os bytes em `data` até rodar scripts/migrar-anexos-s3.ts.
+  storageKey String?
+  data       Bytes?
+  createdAt  DateTime       @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model CashRegister {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  balance   Decimal  @default(0) @db.Decimal(14, 2)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  movements CashMovement[]
+  accounts  Account[]
+}
+
+model CashMovement {
+  id             String       @id @default(cuid())
+  type           MovementType
+  amount         Decimal      @db.Decimal(14, 2)
+  description    String
+  cashRegisterId String
+  accountId      String?      @unique
+  userId         String
+  createdAt      DateTime     @default(now())
+
+  cashRegister CashRegister @relation(fields: [cashRegisterId], references: [id])
+  account      Account?     @relation(fields: [accountId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([cashRegisterId, createdAt])
+}
+
+/// Registro das alterações feitas numa conta rejeitada antes de reenviá-la para aprovação.
+model AccountEdit {
+  id        String   @id @default(cuid())
+  accountId String
+  userId    String
+  /// Lista de { campo, de, para }.
+  changes   Json
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([accountId, createdAt])
+}
+
+model Rejection {
+  id        String   @id @default(cuid())
+  accountId String
+  userId    String
+  reason    String
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([accountId, createdAt])
+}
+
+/// Observações adicionais gravadas depois do lançamento (ex.: na tela de pagamentos).
+model AccountNote {
+  id        String   @id @default(cuid())
+  accountId String
+  userId    String
+  text      String
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([accountId, createdAt])
+}

@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body { @apply bg-paper text-ink antialiased; }
+}
+
+@layer components {
+  .card { @apply rounded-lg border border-line bg-white; }
+  .btn { @apply inline-flex items-center justify-center rounded-md border border-line bg-white px-3 py-1.5 text-sm font-medium hover:bg-paper focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-600 disabled:opacity-50; }
+  .btn-primary { @apply border-brand-700 bg-brand-700 text-white hover:bg-brand-900; }
+  .btn-danger { @apply border-red-300 text-red-700 hover:bg-red-50; }
+  /* Botão só com ícone (o texto vai em title/aria-label). */
+  .btn-icon { @apply h-8 w-8 shrink-0 p-0; }
+  .input { @apply w-full rounded-md border border-line bg-white px-3 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600; }
+  .label { @apply mb-1 block text-xs font-medium text-muted; }
+  .th { @apply px-3 py-2 text-left text-xs font-medium text-muted; }
+  .td { @apply px-3 py-2 text-sm; }
+}
