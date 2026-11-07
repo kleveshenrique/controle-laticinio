@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
 import { brl, dateTimeBR } from "@/lib/format";
-import { Flash } from "@/components/Flash";
 import { criarCaixa, movimentarCaixa } from "@/app/actions";
 
 export default async function Caixa({ searchParams }: { searchParams: { id?: string; erro?: string; ok?: string } }) {
@@ -26,7 +25,6 @@ export default async function Caixa({ searchParams }: { searchParams: { id?: str
 
   return (
     <div className="space-y-6">
-      <Flash erro={searchParams.erro} ok={searchParams.ok} />
       <div className="flex flex-wrap gap-2">
         {caixas.map((c) => (
           <Link key={c.id} href={`/caixa?id=${c.id}`} className={`btn ${c.id === atual?.id ? "btn-primary" : ""}`}>

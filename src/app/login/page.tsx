@@ -1,12 +1,10 @@
 import { login } from "@/app/actions";
-import { Flash } from "@/components/Flash";
 
 export default function LoginPage({ searchParams }: { searchParams: { erro?: string } }) {
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4">
       <h1 className="mb-1 text-xl font-semibold">Controle Laticínio</h1>
       <p className="mb-6 text-sm text-muted">Entre para lançar, aprovar e pagar contas.</p>
-      <Flash erro={searchParams.erro} />
       <form action={login} className="card space-y-3 p-4">
         <div>
           <label className="label" htmlFor="email">E-mail</label>

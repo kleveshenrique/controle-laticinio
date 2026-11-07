@@ -7,6 +7,7 @@ import { AnexosEditor, anexosParaFormData, type AnexoExistente, type NovosAnexos
 import { maskMoney, parseMoney } from "@/lib/format";
 import { IconeEditar } from "@/components/Icones";
 import { BotaoAcao, useAcoesContas } from "@/components/AcoesContas";
+import { CampoBusca } from "@/components/CampoBusca";
 
 type Conta = { id: string; code: number; description: string; supplier: string; category: string; amount: number; dueDate: string; notes: string };
 type Dados = Pick<Conta, "description" | "supplier" | "category" | "dueDate" | "notes"> & { amount: string };
@@ -55,11 +56,16 @@ export function EditarConta({
     if (!open && d.open) d.close();
   }, [open, mounted, conta]);
 
+  // Fornecedor/categoria: só os cadastrados (ou o que a conta já tinha, mesmo que inativado depois).
+  const naLista = (lista: string[], atual: string, v: string) =>
+    v === atual || lista.some((n) => n.toLowerCase() === v.trim().toLowerCase());
+  const fornecedorOk = naLista(suppliers, conta.supplier, dados.supplier);
+  const categoriaOk = Boolean(conta.category && dados.category === conta.category) || naLista(categories, "", dados.category);
   // Mesmas regras validadas no servidor (editarConta).
   const valido =
     dados.description.trim().length >= 2 &&
-    dados.supplier.trim().length >= 2 &&
-    dados.category.trim().length >= 2 &&
+    fornecedorOk &&
+    categoriaOk &&
     parseMoney(dados.amount) > 0 &&
     /^\d{4}-\d{2}-\d{2}$/.test(dados.dueDate);
   const set = (k: keyof Dados, v: string) => setDados((d) => ({ ...d, [k]: v }));
@@ -96,8 +102,6 @@ export function EditarConta({
                 </p>
               </div>
 
-              <datalist id={`${uid}-forn`}>{suppliers.map((s) => <option key={s} value={s} />)}</datalist>
-              <datalist id={`${uid}-cat`}>{categories.map((s) => <option key={s} value={s} />)}</datalist>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="sm:col-span-2">
@@ -106,11 +110,13 @@ export function EditarConta({
                 </div>
                 <div>
                   <label className="label" htmlFor={`${uid}-sup`}>Fornecedor</label>
-                  <input id={`${uid}-sup`} className="input" list={`${uid}-forn`} value={dados.supplier} onChange={(e) => set("supplier", e.target.value)} />
+                  <CampoBusca id={`${uid}-sup`} placeholder="Buscar fornecedor" opcoes={suppliers} value={dados.supplier} onChange={(v) => set("supplier", v)} vazio="Nenhum fornecedor ativo encontrado." />
+                  {dados.supplier.trim() && !fornecedorOk && <p className="mt-1 text-xs text-red-700">Fornecedor não cadastrado. Escolha um da lista.</p>}
                 </div>
                 <div>
                   <label className="label" htmlFor={`${uid}-categ`}>Categoria</label>
-                  <input id={`${uid}-categ`} className="input" list={`${uid}-cat`} value={dados.category} onChange={(e) => set("category", e.target.value)} />
+                  <CampoBusca id={`${uid}-categ`} placeholder="Buscar categoria" opcoes={categories} value={dados.category} onChange={(v) => set("category", v)} vazio="Nenhuma categoria ativa encontrada." />
+                  {dados.category.trim() && !categoriaOk && <p className="mt-1 text-xs text-red-700">Categoria não cadastrada. Escolha uma da lista.</p>}
                 </div>
                 <div>
                   <label className="label" htmlFor={`${uid}-val`}>Valor (R$)</label>

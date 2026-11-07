@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
 import { brl, dateBR, dateTimeBR, todayISO } from "@/lib/format";
-import { Flash } from "@/components/Flash";
 import { Anexos } from "@/components/Anexos";
 import { PagarConta } from "@/components/PagarConta";
 import { GerenciarAnexos } from "@/components/GerenciarAnexos";
@@ -34,7 +33,6 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
       <section>
         <h1 className="mb-1 text-lg font-semibold">Pagamentos</h1>
         <p className="mb-4 text-sm text-muted">Clique em "Pagar" na conta aprovada e escolha o caixa de onde o dinheiro saiu. A baixa é registrada no caixa automaticamente.</p>
-        <Flash erro={searchParams.erro} ok={searchParams.ok} />
 
           <div className="card overflow-x-auto">
             <table className="w-full min-w-[820px]">

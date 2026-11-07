@@ -18,3 +18,17 @@
   .th { @apply px-3 py-2 text-left text-xs font-medium text-muted; }
   .td { @apply px-3 py-2 text-sm; }
 }
+
+/* Entrada dos toasts (centro da tela). */
+@keyframes toast-entrada {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.toast-entrada { animation: toast-entrada 160ms ease-out; }
+
+/* Barra de progresso do toast (a duração vem do componente). */
+@keyframes toast-progresso {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.toast-progresso { transform-origin: left; animation: toast-progresso linear forwards; }

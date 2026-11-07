@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
 import { LancamentoForm } from "@/components/LancamentoForm";
-import { Flash } from "@/components/Flash";
 import { UserError } from "@/lib/errors";
 import { redirect } from "next/navigation";
 
@@ -21,7 +20,6 @@ export default async function NovaConta({ searchParams }: { searchParams: { erro
     <div>
       <h1 className="mb-1 text-lg font-semibold">Lançar contas a pagar</h1>
       <p className="mb-4 text-sm text-muted">Preencha quantas linhas precisar. Linhas em branco são ignoradas. Depois de lançadas, as contas aguardam aprovação.</p>
-      <Flash erro={searchParams.erro} ok={searchParams.ok} />
       <div className="card p-4">
         <LancamentoForm suppliers={suppliers.map((s) => s.name)} categories={categories.map((c) => c.name)} />
       </div>

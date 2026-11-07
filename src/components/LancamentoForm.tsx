@@ -6,17 +6,21 @@ import { lancarContas } from "@/app/actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { PdfPicker } from "@/components/PdfPicker";
 import { brl, maskMoney, parseMoney } from "@/lib/format";
-import { abrirCadastroNovaAba, ouvirCadastroCriado, type TipoCadastro } from "@/lib/cadastroNovaAba";
+import { CadastroRapido, type TipoCadastro } from "@/components/CadastroRapido";
+import { CampoBusca } from "@/components/CampoBusca";
 
 type Row = { description: string; supplier: string; category: string; amount: string; dueDate: string; notes: string; pedido: File[]; notas: File[]; boletos: File[] };
 const empty = (): Row => ({ description: "", supplier: "", category: "", amount: "", dueDate: "", notes: "", pedido: [], notas: [], boletos: [] });
 
 
+/** Fornecedor/categoria só podem ser escolhidos entre os já cadastrados (sem diferenciar maiúsculas). */
+const naLista = (lista: string[], v: string) => lista.some((n) => n.toLowerCase() === v.trim().toLowerCase());
+
 /** Mesmas regras validadas no servidor (lancarContas). */
-const invalidFields = (r: Row) => ({
+const invalidFields = (r: Row, fornecedores: string[], categorias: string[]) => ({
   description: r.description.trim().length < 2,
-  supplier: r.supplier.trim().length < 2,
-  category: r.category.trim().length < 2,
+  supplier: !naLista(fornecedores, r.supplier),
+  category: !naLista(categorias, r.category),
   amount: !(parseMoney(r.amount) > 0),
   dueDate: !/^\d{4}-\d{2}-\d{2}$/.test(r.dueDate),
 });
@@ -26,42 +30,33 @@ const isFilled = (r: Row) =>
 export function LancamentoForm({ suppliers, categories }: { suppliers: string[]; categories: string[] }) {
   const [rows, setRows] = useState<Row[]>([empty()]);
   const set = <K extends keyof Row>(i: number, k: K, v: Row[K]) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  // Fornecedores/categorias cadastrados pelo modal (botões "+") entram nas listas e preenchem a linha de onde o cadastro foi aberto.
+  const [fornecedores, setFornecedores] = useState(suppliers);
+  const [categorias, setCategorias] = useState(categories);
   const filled = rows.filter(isFilled);
-  const valid = filled.length > 0 && filled.every((r) => !Object.values(invalidFields(r)).some(Boolean));
+  const valid = filled.length > 0 && filled.every((r) => !Object.values(invalidFields(r, fornecedores, categorias)).some(Boolean));
   const total = filled.reduce((s, r) => s + parseMoney(r.amount), 0);
   const grid = "grid gap-2 md:grid-cols-[2fr_1.5fr_1.2fr_1fr_1fr]";
   const [pending, startTransition] = useTransition();
   const searchParams = useSearchParams();
   const enviado = useRef(false);
 
-  // Fornecedores/categorias cadastrados em outra aba (botões "+") entram nas listas e preenchem a linha de onde o cadastro foi aberto.
-  const [fornecedores, setFornecedores] = useState(suppliers);
-  const [categorias, setCategorias] = useState(categories);
-  const formId = useRef("");
-  const refLinha = (i: number) => {
-    if (!formId.current) formId.current = Math.random().toString(36).slice(2, 10);
-    return `lanc-${formId.current}-${i}`;
-  };
+  const [cadastro, setCadastro] = useState<{ tipo: TipoCadastro; linha: number } | null>(null);
   useEffect(() => setFornecedores(suppliers), [suppliers]);
   useEffect(() => setCategorias(categories), [categories]);
-  useEffect(
-    () =>
-      ouvirCadastroCriado(({ tipo, nome, ref }) => {
-        const incluir = (l: string[]) => (l.includes(nome) ? l : [...l, nome].sort((a, b) => a.localeCompare(b, "pt-BR")));
-        (tipo === "fornecedor" ? setFornecedores : setCategorias)(incluir);
-        if (!formId.current) return;
-        const campo = tipo === "fornecedor" ? "supplier" : "category";
-        setRows((rs) => rs.map((r, j) => (ref === refLinha(j) ? { ...r, [campo]: nome } : r)));
-      }),
-    [],
-  );
+  const cadastrado = (tipo: TipoCadastro, nome: string) => {
+    const incluir = (l: string[]) => (l.includes(nome) ? l : [...l, nome].sort((a, b) => a.localeCompare(b, "pt-BR")));
+    (tipo === "fornecedor" ? setFornecedores : setCategorias)(incluir);
+    const linha = cadastro?.linha;
+    if (linha !== undefined) set(linha, tipo === "fornecedor" ? "supplier" : "category", nome);
+  };
   const botaoNovo = (tipo: TipoCadastro, i: number) => (
     <button
       type="button"
       className="btn shrink-0 px-2.5 text-base leading-none"
-      title={`Cadastrar ${tipo === "fornecedor" ? "novo fornecedor" : "nova categoria"} (abre em outra aba; ao salvar, já aparece aqui)`}
+      title={tipo === "fornecedor" ? "Cadastrar novo fornecedor" : "Cadastrar nova categoria"}
       aria-label={tipo === "fornecedor" ? "Cadastrar novo fornecedor" : "Cadastrar nova categoria"}
-      onClick={() => abrirCadastroNovaAba(tipo, refLinha(i))}
+      onClick={() => setCadastro({ tipo, linha: i })}
     >
       +
     </button>
@@ -92,28 +87,31 @@ export function LancamentoForm({ suppliers, categories }: { suppliers: string[];
         startTransition(() => lancarContas(fd));
       }}
     >
+      <CadastroRapido tipo={cadastro?.tipo ?? null} onClose={() => setCadastro(null)} onSalvo={cadastrado} />
       <fieldset disabled={pending} className="space-y-3">
-        <datalist id="fornecedores">{fornecedores.map((s) => <option key={s} value={s} />)}</datalist>
-        <datalist id="categorias">{categorias.map((s) => <option key={s} value={s} />)}</datalist>
-
         <div className={`${grid} hidden text-xs font-medium text-muted md:grid`}>
           <span>Descrição</span><span>Fornecedor</span><span>Categoria</span><span>Valor (R$)</span><span>Vencimento</span>
         </div>
 
         {rows.map((r, i) => {
           // Os PDFs só podem ser adicionados depois que os dados da conta estão preenchidos corretamente.
-          const semDados = Object.values(invalidFields(r)).some(Boolean);
+          const inv = invalidFields(r, fornecedores, categorias);
+          const semDados = Object.values(inv).some(Boolean);
+          const naoCadastrado = [
+            r.supplier.trim() && inv.supplier ? `fornecedor "${r.supplier.trim()}"` : "",
+            r.category.trim() && inv.category ? `categoria "${r.category.trim()}"` : "",
+          ].filter(Boolean);
           const hint = "Preencha descrição, fornecedor, categoria, valor e vencimento para adicionar PDFs.";
           return (
             <div key={i} className={`space-y-2 ${i > 0 ? "border-t border-line pt-3" : ""}`}>
               <div className={grid}>
                 <input className="input" placeholder="Descrição" value={r.description} onChange={(e) => set(i, "description", e.target.value)} />
                 <div className="flex gap-1">
-                  <input className="input" placeholder="Fornecedor" list="fornecedores" value={r.supplier} onChange={(e) => set(i, "supplier", e.target.value)} />
+                  <CampoBusca placeholder="Buscar fornecedor" opcoes={fornecedores} value={r.supplier} onChange={(v) => set(i, "supplier", v)} vazio="Nenhum fornecedor ativo encontrado. Use o “+” para cadastrar." />
                   {botaoNovo("fornecedor", i)}
                 </div>
                 <div className="flex gap-1">
-                  <input className="input" placeholder="Categoria" list="categorias" value={r.category} onChange={(e) => set(i, "category", e.target.value)} />
+                  <CampoBusca placeholder="Buscar categoria" opcoes={categorias} value={r.category} onChange={(v) => set(i, "category", v)} vazio="Nenhuma categoria ativa encontrada. Use o “+” para cadastrar." />
                   {botaoNovo("categoria", i)}
                 </div>
                 <input className="input text-right" placeholder="R$ 0,00" inputMode="numeric" value={r.amount} onChange={(e) => set(i, "amount", maskMoney(e.target.value))} />
@@ -132,6 +130,11 @@ export function LancamentoForm({ suppliers, categories }: { suppliers: string[];
                 <PdfPicker label="Nota fiscal" buttonLabel="Nota fiscal PDF" files={r.notas} onChange={(f) => set(i, "notas", f)} disabled={semDados} disabledHint={hint} />
                 <PdfPicker label="Boletos" buttonLabel="Boleto PDF" files={r.boletos} onChange={(f) => set(i, "boletos", f)} disabled={semDados} disabledHint={hint} />
               </div>
+              {naoCadastrado.length > 0 && (
+                <p className="text-xs text-red-700">
+                  Não cadastrado: {naoCadastrado.join(" e ")}. Escolha um da lista ou cadastre pelo botão “+”.
+                </p>
+              )}
               {semDados && <p className="text-xs text-muted">{hint}</p>}
             </div>
           );

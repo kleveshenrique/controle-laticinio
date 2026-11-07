@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { salvarFornecedor } from "@/app/actions";
+import { cadastrarFornecedorRapido, salvarFornecedor } from "@/app/actions";
 import { SubmitButton } from "@/components/SubmitButton";
+import { toast } from "@/components/Toast";
 import {
   documentoValido,
   maskCep,
@@ -59,8 +60,20 @@ function AvisoLinha({ aviso }: { aviso: Aviso }) {
   return <p className={`mt-1 text-xs ${cor}`} role={aviso.tipo === "erro" ? "alert" : "status"}>{aviso.texto}</p>;
 }
 
-/** Cadastro/edição de fornecedor. CNPJ busca os dados na Receita automaticamente; o CEP busca o endereço ao teclar Enter ou sair do campo. */
-export function FornecedorForm({ inicial, refOrigem }: { inicial?: Fornecedor; /** Aberto em outra aba pelo lançamento de contas. */ refOrigem?: string }) {
+/**
+ * Cadastro/edição de fornecedor. CNPJ busca os dados na Receita automaticamente; o CEP busca o endereço ao teclar Enter ou sair do campo.
+ * Com onSalvo (modal do lançamento de contas), cadastra sem sair da página e devolve o nome; o fornecedor é sempre gravado ativo.
+ */
+export function FornecedorForm({
+  inicial,
+  onSalvo,
+  onCancelar,
+}: {
+  inicial?: Fornecedor;
+  onSalvo?: (nome: string) => void;
+  onCancelar?: () => void;
+}) {
+  const modal = Boolean(onSalvo);
   const [f, setF] = useState<Fornecedor>(() => {
     const i = inicial ?? vazio;
     return {
@@ -177,7 +190,17 @@ export function FornecedorForm({ inicial, refOrigem }: { inicial?: Fornecedor; /
 
   return (
     <form
-      action={salvarFornecedor}
+      action={
+        modal
+          ? async (fd: FormData) => {
+              const r = await cadastrarFornecedorRapido(fd);
+              if (r.ok) {
+                toast("ok", `Fornecedor "${r.nome}" cadastrado.`);
+                onSalvo!(r.nome);
+              } else toast("erro", r.erro);
+            }
+          : salvarFornecedor
+      }
       className="space-y-5"
       onSubmit={(e) => {
         const telefonesOk = [f.phoneCompany, f.phoneFinance, f.phoneCommercial].every(telefoneValido);
@@ -188,7 +211,6 @@ export function FornecedorForm({ inicial, refOrigem }: { inicial?: Fornecedor; /
       }}
     >
       <input type="hidden" name="id" value={f.id} />
-      {refOrigem && <input type="hidden" name="ref" value={refOrigem} />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <fieldset className="flex items-center gap-4 text-sm">
@@ -200,10 +222,12 @@ export function FornecedorForm({ inicial, refOrigem }: { inicial?: Fornecedor; /
             </label>
           ))}
         </fieldset>
-        <label className="flex items-center gap-1.5 text-sm">
-          <input type="checkbox" name="active" checked={f.active} onChange={(e) => set("active", e.target.checked)} />
-          Ativo
-        </label>
+        {!modal && (
+          <label className="flex items-center gap-1.5 text-sm">
+            <input type="checkbox" name="active" checked={f.active} onChange={(e) => set("active", e.target.checked)} />
+            Ativo
+          </label>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-[14rem_1fr]">
@@ -313,8 +337,8 @@ export function FornecedorForm({ inicial, refOrigem }: { inicial?: Fornecedor; /
 
       <div className="flex gap-2">
         <SubmitButton pendingText="Salvando…" disabled={buscandoDoc || buscandoCep}>Salvar</SubmitButton>
-        {refOrigem ? (
-          <button type="button" className="btn" onClick={() => window.close()}>Cancelar</button>
+        {onCancelar ? (
+          <button type="button" className="btn" onClick={onCancelar}>Cancelar</button>
         ) : (
           <Link href="/fornecedores" className="btn">Cancelar</Link>
         )}

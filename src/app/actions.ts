@@ -1,6 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import type { AccountStatus, AttachmentKind } from "@prisma/client";
@@ -12,7 +14,6 @@ import { PERMISSIONS, type PermissionName } from "@/lib/permissions";
 import { brl, dateBR, parseMoney, type AlteracaoConta } from "@/lib/format";
 import { MAX_ANEXOS, MAX_PDF_BYTES, MAX_PDF_MB, TIPOS_ANEXO, type TipoAnexo } from "@/lib/anexos";
 import { comPdfsNoS3, excluirPdfs } from "@/lib/storage";
-import { refValida, urlCadastroSalvo } from "@/lib/cadastroNovaAba";
 import { documentoValido, soDigitos, telefoneValido, UFS, type TipoPessoa } from "@/lib/documentos";
 
 const ids = (fd: FormData) => fd.getAll("ids").map(String);
@@ -47,14 +48,34 @@ const rowSchema = z.object({
   notes: z.string().trim().max(1000, "Observações: no máximo 1000 caracteres.").optional(),
 });
 
-/** Impede lançar contas com fornecedores ou categorias marcados como inativos no cadastro. */
-async function bloquearInativos(fornecedores: string[], categorias: string[]) {
-  const [forn, cat] = await Promise.all([
-    fornecedores.length ? prisma.supplier.findFirst({ where: { name: { in: fornecedores }, active: false }, select: { name: true } }) : null,
-    categorias.length ? prisma.category.findFirst({ where: { name: { in: categorias }, active: false }, select: { name: true } }) : null,
+/**
+ * Fornecedores e categorias só são criados pelos próprios formulários de cadastro.
+ * Aqui apenas localiza os já cadastrados (sem diferenciar maiúsculas) e devolve nome digitado → id.
+ * Nome inexistente ou cadastro inativo gera erro.
+ */
+async function buscarCadastros(fornecedores: string[], categorias: string[]) {
+  const unicos = (l: string[]) => [...new Set(l)];
+  const porNome = (l: string[]) => ({ OR: unicos(l).map((name) => ({ name: { equals: name, mode: "insensitive" as const } })) });
+  const [forns, cats] = await Promise.all([
+    fornecedores.length ? prisma.supplier.findMany({ where: porNome(fornecedores), select: { id: true, name: true, active: true } }) : [],
+    categorias.length ? prisma.category.findMany({ where: porNome(categorias), select: { id: true, name: true, active: true } }) : [],
   ]);
-  if (forn) throw new UserError(`O fornecedor "${forn.name}" está inativo no cadastro.`);
-  if (cat) throw new UserError(`A categoria "${cat.name}" está inativa no cadastro.`);
+  const mapa = (nomes: string[], achados: { id: string; name: string; active: boolean }[], tipo: "fornecedor" | "categoria") => {
+    const m = new Map<string, { id: string; name: string }>();
+    for (const nome of unicos(nomes)) {
+      const c = achados.find((a) => a.name === nome) ?? achados.find((a) => a.name.toLowerCase() === nome.toLowerCase());
+      if (!c)
+        throw new UserError(
+          tipo === "fornecedor"
+            ? `O fornecedor "${nome}" não está cadastrado. Cadastre-o em Fornecedores (botão "+") antes de lançar.`
+            : `A categoria "${nome}" não está cadastrada. Cadastre-a em Categorias (botão "+") antes de lançar.`,
+        );
+      if (!c.active) throw new UserError(`${tipo === "fornecedor" ? "O fornecedor" : "A categoria"} "${c.name}" está inativ${tipo === "fornecedor" ? "o" : "a"} no cadastro.`);
+      m.set(nome, { id: c.id, name: c.name });
+    }
+    return m;
+  };
+  return { fornecedores: mapa(fornecedores, forns, "fornecedor"), categorias: mapa(categorias, cats, "categoria") };
 }
 
 /**
@@ -106,7 +127,7 @@ export async function lancarContas(formData: FormData) {
         return { ...r, amount };
       }),
     );
-    await bloquearInativos(rows.map((r) => r.supplier), rows.map((r) => r.category));
+    const cadastros = await buscarCadastros(rows.map((r) => r.supplier), rows.map((r) => r.category));
     const pdfs = (
       await Promise.all(
         rows.map(async (_, i) =>
@@ -124,15 +145,11 @@ export async function lancarContas(formData: FormData) {
       async (tx) => {
         for (const [i, r] of rows.entries()) {
           const attachments = enviados.filter((p) => p.linha === i).map(({ linha, ...p }) => p);
-          const supplier = await tx.supplier.upsert({ where: { name: r.supplier }, update: {}, create: { name: r.supplier } });
-          const category = r.category
-            ? await tx.category.upsert({ where: { name: r.category }, update: {}, create: { name: r.category } })
-            : null;
           await tx.account.create({
             data: {
               description: r.description,
-              supplierId: supplier.id,
-              categoryId: category?.id,
+              supplierId: cadastros.fornecedores.get(r.supplier)!.id,
+              categoryId: cadastros.categorias.get(r.category)!.id,
               amount: r.amount,
               dueDate: new Date(r.dueDate + "T00:00:00.000Z"),
               notes: r.notes || null,
@@ -233,10 +250,12 @@ export async function editarConta(formData: FormData) {
     const r = parsed.data;
     const amount = parseMoney(r.amount);
     if (!(amount > 0)) throw new UserError("Informe um valor válido.");
-    await bloquearInativos(
-      r.supplier !== acc.supplier.name ? [r.supplier] : [],
-      r.category !== (acc.category?.name ?? "") ? [r.category] : [],
-    );
+    // O que não mudou fica como está (mesmo que o cadastro tenha sido inativado depois); o que mudou precisa estar cadastrado e ativo.
+    const mudouForn = r.supplier !== acc.supplier.name;
+    const mudouCat = !acc.category || r.category !== acc.category.name;
+    const cadastros = await buscarCadastros(mudouForn ? [r.supplier] : [], mudouCat ? [r.category] : []);
+    const supplier = mudouForn ? cadastros.fornecedores.get(r.supplier)! : { id: acc.supplierId, name: acc.supplier.name };
+    const category = mudouCat || !acc.category ? cadastros.categorias.get(r.category)! : { id: acc.category.id, name: acc.category.name };
 
     const { remover, novos } = await lerAlteracoesAnexos(formData, acc.attachments, {
       podeAlterar: (k) => k !== "NOTA_FISCAL",
@@ -249,8 +268,8 @@ export async function editarConta(formData: FormData) {
     const mudancas: AlteracaoConta[] = [];
     const comparar = (campo: string, de: string, para: string) => de !== para && mudancas.push({ campo, de, para });
     comparar("Descrição", acc.description, r.description);
-    comparar("Fornecedor", acc.supplier.name, r.supplier);
-    comparar("Categoria", acc.category?.name ?? "", r.category);
+    comparar("Fornecedor", acc.supplier.name, supplier.name);
+    comparar("Categoria", acc.category?.name ?? "", category.name);
     comparar("Valor", brl(acc.amount), brl(amount));
     comparar("Vencimento", dateBR(acc.dueDate), dateBR(dueDate));
     comparar("Observações", acc.notes ?? "", r.notes ?? "");
@@ -260,8 +279,6 @@ export async function editarConta(formData: FormData) {
     if (!mudancas.length) throw new UserError("Nenhuma alteração feita.");
 
     await comPdfsNoS3(novos, (enviados) => prisma.$transaction(async (tx) => {
-      const supplier = await tx.supplier.upsert({ where: { name: r.supplier }, update: {}, create: { name: r.supplier } });
-      const category = await tx.category.upsert({ where: { name: r.category }, update: {}, create: { name: r.category } });
       const res = await tx.account.updateMany({
         where: { id: acc.id, status },
         data: {
@@ -492,7 +509,7 @@ export async function criarUsuario(formData: FormData) {
     const email = String(formData.get("email") ?? "").trim().toLowerCase();
     const password = String(formData.get("password") ?? "");
     if (name.length < 2 || !email.includes("@")) throw new UserError("Informe nome e e-mail válidos.");
-    if (password.length < 8) throw new UserError("A senha precisa ter ao menos 8 caracteres.");
+    if (password.length < 6) throw new UserError("A senha precisa ter ao menos 6 caracteres.");
     if (await prisma.user.findUnique({ where: { email } })) throw new UserError("Já existe um usuário com esse e-mail.");
     await prisma.user.create({
       data: { name, email, passwordHash: await bcrypt.hash(password, 10), permissions: perms(formData) },
@@ -502,115 +519,152 @@ export async function criarUsuario(formData: FormData) {
 }
 
 export async function atualizarUsuario(formData: FormData) {
-  await run("/usuarios", "/usuarios", async () => {
+  const id = String(formData.get("userId"));
+  // salvo/t: a tela mostra o resultado no card do usuário e limpa o campo de senha (t muda a cada envio).
+  const volta = `/usuarios?salvo=${encodeURIComponent(id)}&t=${Date.now()}`;
+  await run(volta, volta, async () => {
     const admin = await requirePermission("ADMIN");
-    const id = String(formData.get("userId"));
     const permissions = perms(formData);
     const active = formData.get("active") === "on";
     const password = String(formData.get("password") ?? "");
     if (id === admin.id && (!active || !permissions.includes("ADMIN")))
       throw new UserError("Você não pode remover seu próprio acesso de administrador.");
-    if (password && password.length < 8) throw new UserError("A nova senha precisa ter ao menos 8 caracteres.");
-    await prisma.user.update({
+    if (password && password.length < 6) throw new UserError("A nova senha precisa ter ao menos 6 caracteres.");
+    const u = await prisma.user.update({
       where: { id },
       data: { permissions, active, ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}) },
+      select: { name: true },
     });
-    return "Usuário atualizado.";
+    return `Usuário ${u.name} atualizado com sucesso${password ? " (senha alterada)" : ""}.`;
   });
 }
 
 /* ---------- fornecedores ---------- */
 
-/** Cria ou atualiza um fornecedor (campo "id" vazio = novo). CNPJ/CPF, CEP e telefones são gravados só com dígitos. */
-export async function salvarFornecedor(formData: FormData) {
+/** Valida e grava um fornecedor (campo "id" vazio = novo). CNPJ/CPF, CEP e telefones são gravados só com dígitos. */
+async function gravarFornecedor(formData: FormData, forcarAtivo = false) {
+  await requirePermission("LANCAR");
   const id = String(formData.get("id") ?? "");
   const campo = (k: string) => String(formData.get(k) ?? "").trim();
   const name = campo("name").replace(/\s+/g, " ");
-  // Cadastro aberto em outra aba pelo lançamento de contas: ao salvar, vai para a página que avisa a aba de origem.
-  const ref = formData.get("ref");
-  const origem = !id && refValida(ref) ? ref : null;
-  const form = id ? `/fornecedores/${encodeURIComponent(id)}` : origem ? `/fornecedores/novo?ref=${origem}` : "/fornecedores/novo";
-  // Inativo não pode ser usado no lançamento, então não é enviado para a aba de origem.
-  const ok = origem && formData.get("active") === "on" ? urlCadastroSalvo("fornecedor", origem, name) : "/fornecedores";
-  await run(form, ok, async () => {
-    await requirePermission("LANCAR");
-    const personType: TipoPessoa = campo("personType") === "CPF" ? "CPF" : "CNPJ";
-    const document = soDigitos(campo("document"));
-    const zipCode = soDigitos(campo("zipCode"));
-    const state = campo("state").toUpperCase();
-    const telefones = {
-      phoneCompany: soDigitos(campo("phoneCompany")),
-      phoneFinance: soDigitos(campo("phoneFinance")),
-      phoneCommercial: soDigitos(campo("phoneCommercial")),
-    };
+  const personType: TipoPessoa = campo("personType") === "CPF" ? "CPF" : "CNPJ";
+  const document = soDigitos(campo("document"));
+  const zipCode = soDigitos(campo("zipCode"));
+  const state = campo("state").toUpperCase();
+  const telefones = {
+    phoneCompany: soDigitos(campo("phoneCompany")),
+    phoneFinance: soDigitos(campo("phoneFinance")),
+    phoneCommercial: soDigitos(campo("phoneCommercial")),
+  };
 
-    if (!documentoValido(personType, document)) throw new UserError(`${personType} inválido.`);
-    if (name.length < 2) throw new UserError(personType === "CPF" ? "Informe o nome." : "Informe a empresa.");
-    if (zipCode && zipCode.length !== 8) throw new UserError("CEP inválido.");
-    if (state && !(UFS as readonly string[]).includes(state)) throw new UserError("UF inválida.");
-    const rotulos = { phoneCompany: "Contato empresa", phoneFinance: "Contato financeiro", phoneCommercial: "Contato comercial" };
-    for (const [k, v] of Object.entries(telefones))
-      if (!telefoneValido(v)) throw new UserError(`${rotulos[k as keyof typeof rotulos]}: informe DDD + número.`);
+  if (!documentoValido(personType, document)) throw new UserError(`${personType} inválido.`);
+  if (name.length < 2) throw new UserError(personType === "CPF" ? "Informe o nome." : "Informe a empresa.");
+  if (zipCode && zipCode.length !== 8) throw new UserError("CEP inválido.");
+  if (state && !(UFS as readonly string[]).includes(state)) throw new UserError("UF inválida.");
+  const rotulos = { phoneCompany: "Contato empresa", phoneFinance: "Contato financeiro", phoneCommercial: "Contato comercial" };
+  for (const [k, v] of Object.entries(telefones))
+    if (!telefoneValido(v)) throw new UserError(`${rotulos[k as keyof typeof rotulos]}: informe DDD + número.`);
 
-    const mesmoDoc = await prisma.supplier.findFirst({ where: { document, id: { not: id || undefined } }, select: { name: true } });
-    if (mesmoDoc) throw new UserError(`Este ${personType} já está cadastrado para "${mesmoDoc.name}".`);
-    const mesmoNome = await prisma.supplier.findFirst({ where: { name: { equals: name, mode: "insensitive" }, id: { not: id || undefined } }, select: { id: true } });
-    if (mesmoNome) throw new UserError(`Já existe um fornecedor chamado "${name}".`);
+  const mesmoDoc = await prisma.supplier.findFirst({ where: { document, id: { not: id || undefined } }, select: { name: true } });
+  if (mesmoDoc) throw new UserError(`Este ${personType} já está cadastrado para "${mesmoDoc.name}".`);
+  const mesmoNome = await prisma.supplier.findFirst({ where: { name: { equals: name, mode: "insensitive" }, id: { not: id || undefined } }, select: { id: true } });
+  if (mesmoNome) throw new UserError(`Já existe um fornecedor chamado "${name}".`);
 
-    const data = {
-      personType,
-      document,
-      name,
-      active: formData.get("active") === "on",
-      zipCode: zipCode || null,
-      state: state || null,
-      city: campo("city") || null,
-      address: campo("address") || null,
-      number: campo("number") || null,
-      district: campo("district") || null,
-      phoneCompany: telefones.phoneCompany || null,
-      phoneFinance: telefones.phoneFinance || null,
-      phoneCommercial: telefones.phoneCommercial || null,
-    };
-    if (id) {
-      const res = await prisma.supplier.updateMany({ where: { id }, data });
-      if (!res.count) throw new UserError("Fornecedor não encontrado.");
-      return `Fornecedor "${name}" atualizado.`;
-    }
-    await prisma.supplier.create({ data });
-    return `Fornecedor "${name}" cadastrado.`;
-  });
+  const data = {
+    personType,
+    document,
+    name,
+    active: forcarAtivo || formData.get("active") === "on",
+    zipCode: zipCode || null,
+    state: state || null,
+    city: campo("city") || null,
+    address: campo("address") || null,
+    number: campo("number") || null,
+    district: campo("district") || null,
+    phoneCompany: telefones.phoneCompany || null,
+    phoneFinance: telefones.phoneFinance || null,
+    phoneCommercial: telefones.phoneCommercial || null,
+  };
+  if (id) {
+    const res = await prisma.supplier.updateMany({ where: { id }, data });
+    if (!res.count) throw new UserError("Fornecedor não encontrado.");
+    return { nome: name, msg: `Fornecedor "${name}" atualizado.` };
+  }
+  await prisma.supplier.create({ data });
+  return { nome: name, msg: `Fornecedor "${name}" cadastrado.` };
+}
+
+/** Tela de fornecedores: grava e volta para a lista (ou para o formulário, com o erro). */
+export async function salvarFornecedor(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  const form = id ? `/fornecedores/${encodeURIComponent(id)}` : "/fornecedores/novo";
+  await run(form, "/fornecedores", async () => (await gravarFornecedor(formData)).msg);
 }
 
 /* ---------- categorias ---------- */
 
-/** Cria ou atualiza uma categoria (campo "id" vazio = nova). */
-export async function salvarCategoria(formData: FormData) {
+/** Valida e grava uma categoria (campo "id" vazio = nova). */
+async function gravarCategoria(formData: FormData, forcarAtivo = false) {
+  await requirePermission("LANCAR");
   const id = String(formData.get("id") ?? "");
   const name = String(formData.get("name") ?? "").trim().replace(/\s+/g, " ");
-  const active = formData.get("active") === "on";
-  // Cadastro aberto em outra aba pelo lançamento de contas: ao salvar, vai para a página que avisa a aba de origem.
-  const ref = formData.get("ref");
-  const origem = !id && refValida(ref) ? ref : null;
-  const form = origem ? `/categorias/nova?ref=${origem}` : "/categorias";
-  const ok = origem && active ? urlCadastroSalvo("categoria", origem, name) : "/categorias";
-  await run(form, ok, async () => {
-    await requirePermission("LANCAR");
-    if (name.length < 2) throw new UserError("Informe o nome da categoria.");
-    if (name.length > 100) throw new UserError("Nome da categoria: no máximo 100 caracteres.");
-    const mesmoNome = await prisma.category.findFirst({
-      where: { name: { equals: name, mode: "insensitive" }, id: { not: id || undefined } },
-      select: { id: true },
-    });
-    if (mesmoNome) throw new UserError(`Já existe uma categoria chamada "${name}".`);
-    if (id) {
-      const res = await prisma.category.updateMany({ where: { id }, data: { name, active } });
-      if (!res.count) throw new UserError("Categoria não encontrada.");
-      return `Categoria "${name}" atualizada.`;
-    }
-    await prisma.category.create({ data: { name, active } });
-    return `Categoria "${name}" cadastrada.`;
+  const active = forcarAtivo || formData.get("active") === "on";
+  if (name.length < 2) throw new UserError("Informe o nome da categoria.");
+  if (name.length > 100) throw new UserError("Nome da categoria: no máximo 100 caracteres.");
+  const mesmoNome = await prisma.category.findFirst({
+    where: { name: { equals: name, mode: "insensitive" }, id: { not: id || undefined } },
+    select: { id: true },
   });
+  if (mesmoNome) throw new UserError(`Já existe uma categoria chamada "${name}".`);
+  if (id) {
+    const res = await prisma.category.updateMany({ where: { id }, data: { name, active } });
+    if (!res.count) throw new UserError("Categoria não encontrada.");
+    return { nome: name, msg: `Categoria "${name}" atualizada.` };
+  }
+  await prisma.category.create({ data: { name, active } });
+  return { nome: name, msg: `Categoria "${name}" cadastrada.` };
+}
+
+/** Tela de categorias: grava e volta para a lista (ou para o formulário, com o erro). */
+export async function salvarCategoria(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  // Salvo pela própria lista: volta com a mesma aba e busca (?situacao=&q=), para a lista não sumir.
+  let volta: string | null = null;
+  try {
+    const ref = new URL(headers().get("referer") ?? "");
+    if (ref.pathname === "/categorias") {
+      ref.searchParams.delete("ok");
+      ref.searchParams.delete("erro");
+      volta = `/categorias?${ref.searchParams.toString()}`;
+    }
+  } catch {}
+  await run(volta ?? (id ? "/categorias" : "/categorias/nova"), volta ?? "/categorias", async () => (await gravarCategoria(formData)).msg);
+}
+
+/* ---------- cadastro rápido (modal no lançamento de contas) ---------- */
+
+export type ResultadoCadastro = { ok: true; nome: string } | { ok: false; erro: string };
+
+/** Cadastra (sempre ativo, para já poder ser usado) sem sair da página; devolve o nome ou o erro. */
+async function cadastroRapido(gravar: () => Promise<{ nome: string }>): Promise<ResultadoCadastro> {
+  try {
+    const { nome } = await gravar();
+    revalidatePath("/", "layout");
+    return { ok: true, nome };
+  } catch (e) {
+    if (e instanceof UserError) return { ok: false, erro: e.message };
+    throw e;
+  }
+}
+
+export async function cadastrarFornecedorRapido(formData: FormData) {
+  formData.delete("id");
+  return cadastroRapido(() => gravarFornecedor(formData, true));
+}
+
+export async function cadastrarCategoriaRapido(formData: FormData) {
+  formData.delete("id");
+  return cadastroRapido(() => gravarCategoria(formData, true));
 }
 
 /* ---------- observações adicionais ---------- */

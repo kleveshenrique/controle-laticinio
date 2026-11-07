@@ -7,7 +7,6 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Anexos } from "@/components/Anexos";
 import { GerenciarAnexos } from "@/components/GerenciarAnexos";
 import { EditarConta } from "@/components/EditarConta";
-import { Flash } from "@/components/Flash";
 import { cancelar, reenviar } from "@/app/actions";
 import { AcoesAprovacao } from "@/components/AcoesAprovacao";
 import { AbaAcao, AcoesContasProvider, BotaoAcaoConta } from "@/components/AcoesContas";
@@ -63,7 +62,6 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
   return (
     <div>
       <AcoesContasProvider>
-      <Flash erro={sp.erro} ok={sp.ok} />
       <div className="mb-3 flex flex-wrap gap-2 text-sm">
         {tabs.map(([k, label]) => (
           <AbaAcao key={k} href={`/contas?status=${k}`} ativa={!sp.vencidas && status === k}>
