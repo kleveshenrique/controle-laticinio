@@ -86,9 +86,9 @@ export function MenuUsuario({ nome, email, fotoUrl }: { nome: string; email: str
         aria-controls={menuId}
         aria-label={`Menu de ${nome}`}
         title={nome}
-        className="relative rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+        className="relative flex rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
       >
-        <Avatar nome={nome} fotoUrl={fotoUrl} />
+        <Avatar nome={nome} fotoUrl={fotoUrl} className="h-9 w-9 text-sm md:h-12 md:w-12 md:text-base" />
         {enviando && (
           <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40">
             <svg className="h-4 w-4 animate-spin text-white" viewBox="0 0 24 24" fill="none" aria-hidden="true">

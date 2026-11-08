@@ -17,25 +17,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-line bg-white">
-        {/* 1ª linha: título centralizado (colunas laterais iguais) e avatar (menu: foto, senha, Sair) + nome à direita.
-            2ª linha: botões do menu (no celular rolam na horizontal; no desktop ficam centralizados). */}
-        <div className="mx-auto max-w-6xl space-y-3 px-4 py-3">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-            <span aria-hidden />
-            <span className="text-center font-semibold text-brand-900">Controle Financeiro</span>
-            <div className="flex min-w-0 flex-col items-end gap-1">
-              <MenuUsuario
-                nome={user.name}
-                email={user.email}
-                fotoUrl={user.avatarKey ? `/avatar/${user.id}?v=${encodeURIComponent(user.avatarKey.split("/").pop()!)}` : null}
-              />
-              <span className="max-w-full truncate text-xs text-muted" title={user.name}>
-                {user.name}
-              </span>
-            </div>
+      <header className="border-b border-blue-200 bg-gradient-to-r from-blue-900 via-blue-500 to-blue-50">
+        {/* Duas colunas: à esquerda o título e, abaixo, os botões do menu (no celular rolam na horizontal; no desktop
+            ficam centralizados); à direita o avatar (menu: foto, senha, Sair) + nome, centralizados na altura das duas linhas. */}
+        <div className="mx-auto grid max-w-6xl grid-cols-[1fr_auto] items-center gap-4 px-4 py-3">
+          <div className="min-w-0 space-y-3">
+            <div className="text-center font-semibold text-white drop-shadow-sm">Controle Financeiro</div>
+            <NavLinks items={nav.map(({ href, label }) => ({ href, label }))} />
           </div>
-          <NavLinks items={nav.map(({ href, label }) => ({ href, label }))} />
+          <div className="flex max-w-[8rem] flex-col items-center gap-1">
+            <MenuUsuario
+              nome={user.name}
+              email={user.email}
+              fotoUrl={user.avatarKey ? `/avatar/${user.id}?v=${encodeURIComponent(user.avatarKey.split("/").pop()!)}` : null}
+            />
+            <span className="max-w-full truncate text-xs text-muted" title={user.name}>
+              {user.name}
+            </span>
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>

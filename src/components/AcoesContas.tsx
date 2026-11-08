@@ -115,14 +115,19 @@ export function BotaoAcaoConta({
  * Aba de filtro que navega para `href`: enquanto a página nova carrega, todos os
  * botões ficam bloqueados e a aba clicada mostra o spinner.
  */
-export function AbaAcao({ href, ativa, children }: { href: string; ativa: boolean; children: ReactNode }) {
+/** cor (opcional): classes de fundo/texto/borda do status; a aba ativa ganha um contorno na mesma cor. */
+export function AbaAcao({ href, ativa, cor, children }: { href: string; ativa: boolean; cor?: string; children: ReactNode }) {
   const router = useRouter();
   const acoes = useAcoesContas();
   const chave = `aba-${href}`;
+  // Com cor, não usa .btn (o hover:bg-paper dele apagaria a cor); repete o resto do visual do botão.
+  const estilo = cor
+    ? `inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-medium hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-600 disabled:opacity-50 ${cor} ${ativa ? "font-semibold ring-2 ring-current ring-offset-1" : ""}`
+    : `btn ${ativa ? "btn-primary" : ""}`;
   return (
     <button
       type="button"
-      className={`btn gap-2 ${ativa ? "btn-primary" : ""}`}
+      className={`gap-2 ${estilo}`}
       aria-current={ativa ? "page" : undefined}
       aria-busy={acoes.ativo === chave}
       disabled={acoes.ocupado}

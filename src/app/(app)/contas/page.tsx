@@ -2,7 +2,7 @@ import { Observacoes } from "@/components/Observacoes";
 import type { AccountStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
-import { brl, dateBR, dateTimeBR, STATUS, todayISO } from "@/lib/format";
+import { brl, dateBR, dateTimeBR, STATUS, todayISO, VENCIDAS_CLS } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Anexos } from "@/components/Anexos";
 import { GerenciarAnexos } from "@/components/GerenciarAnexos";
@@ -17,7 +17,7 @@ type SP = { status?: string; q?: string; de?: string; ate?: string; vencidas?: s
 export default async function Contas({ searchParams: sp }: { searchParams: SP }) {
   const user = await requireUser();
   const where: Prisma.AccountWhereInput = {};
-  // Sem filtro na URL, abre em "Aprovação" (pendentes). "Todas" usa status=TODAS.
+  // Sem filtro na URL, abre em "Aprovar" (pendentes). "Todas" usa status=TODAS.
   const status = sp.status ?? (sp.vencidas ? "" : "PENDENTE");
   if (status in STATUS) where.status = status as AccountStatus;
   if (sp.vencidas) {
@@ -57,18 +57,18 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
       ])
     : [[], []];
 
-  const tabs: [string, string][] = [["TODAS", "Todas"], ...Object.entries(STATUS).map(([k, v]) => [k, "tab" in v ? v.tab : v.label] as [string, string])];
+  const tabs: [string, string, string?][] = [["TODAS", "Todas"], ...Object.entries(STATUS).map(([k, v]) => [k, "tab" in v ? v.tab : v.label, v.cls] as [string, string, string])];
 
   return (
     <div>
       <AcoesContasProvider>
       <div className="mb-3 flex flex-wrap gap-2 text-sm">
-        {tabs.map(([k, label]) => (
-          <AbaAcao key={k} href={`/contas?status=${k}`} ativa={!sp.vencidas && status === k}>
+        {tabs.map(([k, label, cor]) => (
+          <AbaAcao key={k} href={`/contas?status=${k}`} ativa={!sp.vencidas && status === k} cor={cor}>
             {label}
           </AbaAcao>
         ))}
-        <AbaAcao href="/contas?vencidas=1" ativa={Boolean(sp.vencidas)}>Vencidas</AbaAcao>
+        <AbaAcao href="/contas?vencidas=1" ativa={Boolean(sp.vencidas)} cor={VENCIDAS_CLS}>Vencidas</AbaAcao>
       </div>
 
       <form className="card mb-4 grid gap-3 p-3 sm:grid-cols-[2fr_1fr_1fr_auto]">
