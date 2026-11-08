@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, ListObjectVersionsCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 /**
  * Armazenamento dos PDFs anexados (pedido, boletos, nota fiscal) no AWS S3.
@@ -34,11 +34,33 @@ export async function enviarPdf(data: Buffer, fileName: string): Promise<string>
   return key;
 }
 
-/** Abre o PDF para leitura (stream). */
-export async function lerPdf(key: string) {
+/** Abre um arquivo do bucket para leitura (stream). */
+export async function lerArquivo(key: string) {
   const res = await s3().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
   if (!res.Body) throw new Error(`Objeto vazio no S3: ${key}`);
   return res.Body.transformToWebStream();
+}
+
+/** Abre o PDF para leitura (stream). */
+export const lerPdf = lerArquivo;
+
+export const TIPOS_AVATAR = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" } as const;
+export type TipoAvatar = keyof typeof TIPOS_AVATAR;
+
+/** Envia a foto de um usuário (fica em <prefixo>/avatares/) e devolve a chave do objeto. */
+export async function enviarAvatar(data: Buffer, tipo: TipoAvatar): Promise<string> {
+  const key = `${prefixo()}/avatares/${randomUUID()}.${TIPOS_AVATAR[tipo]}`;
+  await s3().send(
+    new PutObjectCommand({
+      Bucket: bucket(),
+      Key: key,
+      Body: data,
+      ContentType: tipo,
+      ContentLength: data.length,
+      ServerSideEncryption: "AES256",
+    }),
+  );
+  return key;
 }
 
 /**
@@ -69,6 +91,50 @@ export async function removerPdfs(keys: (string | null | undefined)[]) {
       console.error("Falha ao remover PDFs do S3:", e);
     }
   }
+}
+
+/**
+ * Apaga DEFINITIVAMENTE tudo sob o prefixo dos anexos (S3_PREFIX, padrão "anexos/"):
+ * versões atuais, versões antigas e marcadores de exclusão (delete markers).
+ * Funciona também em bucket sem versionamento. Lança erro se algum objeto não puder ser apagado.
+ * Devolve quantos arquivos distintos e quantas versões/marcadores foram apagados.
+ */
+export async function apagarTodosPdfsDefinitivo(): Promise<{ arquivos: number; versoes: number }> {
+  const chaves = new Set<string>();
+  let versoes = 0;
+  let keyMarker: string | undefined;
+  let versionIdMarker: string | undefined;
+  do {
+    const res = await s3().send(
+      new ListObjectVersionsCommand({
+        Bucket: bucket(),
+        Prefix: `${prefixo()}/`,
+        KeyMarker: keyMarker,
+        VersionIdMarker: versionIdMarker,
+      }),
+    );
+    const objetos = [...(res.Versions ?? []), ...(res.DeleteMarkers ?? [])]
+      .filter((o) => o.Key)
+      .map((o) => ({ Key: o.Key!, VersionId: o.VersionId }));
+
+    // Cada página tem no máximo 1000 itens (versões + marcadores), mas apaga em lotes por segurança.
+    for (let i = 0; i < objetos.length; i += 1000) {
+      const lote = objetos.slice(i, i + 1000);
+      const del = await s3().send(
+        new DeleteObjectsCommand({ Bucket: bucket(), Delete: { Objects: lote, Quiet: true } }),
+      );
+      if (del.Errors?.length) {
+        const e = del.Errors[0];
+        throw new Error(`S3 não excluiu ${e.Key} (versão ${e.VersionId}): ${e.Code} ${e.Message ?? ""}`.trim());
+      }
+    }
+    for (const o of res.Versions ?? []) if (o.Key) chaves.add(o.Key);
+    versoes += objetos.length;
+
+    keyMarker = res.IsTruncated ? res.NextKeyMarker : undefined;
+    versionIdMarker = res.IsTruncated ? res.NextVersionIdMarker : undefined;
+  } while (keyMarker);
+  return { arquivos: chaves.size, versoes };
 }
 
 type PdfLido = { kind: string; fileName: string; size: number; data: Buffer };

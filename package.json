@@ -9,6 +9,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "db:reset": "tsx --env-file=.env scripts/resetar-banco.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {

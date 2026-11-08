@@ -1,6 +1,7 @@
+/** label: etiqueta do status nas listas; tab (opcional): nome mais curto no botão de filtro da tela Contas. */
 export const STATUS = {
-  PENDENTE: { label: "Aguardando aprovação", cls: "bg-amber-50 text-amber-800 border-amber-200" },
-  APROVADA: { label: "Aprovada, a pagar", cls: "bg-sky-50 text-sky-800 border-sky-200" },
+  PENDENTE: { label: "Aguardando aprovação", tab: "Aprovação", cls: "bg-amber-50 text-amber-800 border-amber-200" },
+  APROVADA: { label: "Aprovada, a pagar", tab: "Aprovada", cls: "bg-sky-50 text-sky-800 border-sky-200" },
   REJEITADA: { label: "Rejeitada", cls: "bg-red-50 text-red-800 border-red-200" },
   PAGA: { label: "Paga", cls: "bg-brand-50 text-brand-700 border-brand-600/30" },
   CANCELADA: { label: "Cancelada", cls: "bg-gray-100 text-gray-600 border-gray-200" },

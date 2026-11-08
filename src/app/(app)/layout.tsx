@@ -1,6 +1,6 @@
 import { can, requireUser } from "@/lib/auth";
 import { NavLinks } from "@/components/NavLinks";
-import { logout } from "@/app/actions";
+import { MenuUsuario } from "@/components/MenuUsuario";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
@@ -18,13 +18,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-screen">
       <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
-          <span className="font-semibold text-brand-900">Controle Laticínio</span>
+        {/* 1ª linha: título centralizado (colunas laterais iguais) e avatar (menu: foto, senha, Sair) + nome à direita.
+            2ª linha: botões do menu (no celular rolam na horizontal; no desktop ficam centralizados). */}
+        <div className="mx-auto max-w-6xl space-y-3 px-4 py-3">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+            <span aria-hidden />
+            <span className="text-center font-semibold text-brand-900">Controle Financeiro</span>
+            <div className="flex min-w-0 flex-col items-end gap-1">
+              <MenuUsuario
+                nome={user.name}
+                email={user.email}
+                fotoUrl={user.avatarKey ? `/avatar/${user.id}?v=${encodeURIComponent(user.avatarKey.split("/").pop()!)}` : null}
+              />
+              <span className="max-w-full truncate text-xs text-muted" title={user.name}>
+                {user.name}
+              </span>
+            </div>
+          </div>
           <NavLinks items={nav.map(({ href, label }) => ({ href, label }))} />
-          <form action={logout} className="flex items-center gap-3 text-sm">
-            <span className="text-muted">{user.name}</span>
-            <button className="btn">Sair</button>
-          </form>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>

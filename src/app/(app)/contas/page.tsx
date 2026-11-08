@@ -17,7 +17,7 @@ type SP = { status?: string; q?: string; de?: string; ate?: string; vencidas?: s
 export default async function Contas({ searchParams: sp }: { searchParams: SP }) {
   const user = await requireUser();
   const where: Prisma.AccountWhereInput = {};
-  // Sem filtro na URL, abre em "Aguardando aprovação". "Todas" usa status=TODAS.
+  // Sem filtro na URL, abre em "Aprovação" (pendentes). "Todas" usa status=TODAS.
   const status = sp.status ?? (sp.vencidas ? "" : "PENDENTE");
   if (status in STATUS) where.status = status as AccountStatus;
   if (sp.vencidas) {
@@ -57,7 +57,7 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
       ])
     : [[], []];
 
-  const tabs: [string, string][] = [["TODAS", "Todas"], ...Object.entries(STATUS).map(([k, v]) => [k, v.label] as [string, string])];
+  const tabs: [string, string][] = [["TODAS", "Todas"], ...Object.entries(STATUS).map(([k, v]) => [k, "tab" in v ? v.tab : v.label] as [string, string])];
 
   return (
     <div>

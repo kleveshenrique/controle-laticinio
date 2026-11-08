@@ -13,7 +13,7 @@ import { UserError } from "@/lib/errors";
 import { PERMISSIONS, type PermissionName } from "@/lib/permissions";
 import { brl, dateBR, parseMoney, type AlteracaoConta } from "@/lib/format";
 import { MAX_ANEXOS, MAX_PDF_BYTES, MAX_PDF_MB, TIPOS_ANEXO, type TipoAnexo } from "@/lib/anexos";
-import { comPdfsNoS3, excluirPdfs } from "@/lib/storage";
+import { comPdfsNoS3, enviarAvatar, excluirPdfs, removerPdfs, type TipoAvatar } from "@/lib/storage";
 import { documentoValido, soDigitos, telefoneValido, UFS, type TipoPessoa } from "@/lib/documentos";
 
 const ids = (fd: FormData) => fd.getAll("ids").map(String);
@@ -35,6 +35,75 @@ export async function login(formData: FormData) {
 export async function logout() {
   destroySession();
   redirect("/login");
+}
+
+/* ---------- minha conta (menu do avatar) ---------- */
+
+/** Resultado das ações chamadas pelo menu do avatar: o próprio componente mostra o toast. */
+export type Resultado = { ok?: string; erro?: string };
+
+async function resultado(fn: () => Promise<string>): Promise<Resultado> {
+  try {
+    return { ok: await fn() };
+  } catch (e) {
+    if (e instanceof UserError) return { erro: e.message };
+    throw e;
+  }
+}
+
+export async function alterarSenha(formData: FormData): Promise<Resultado> {
+  return resultado(async () => {
+    const user = await requireUser();
+    const atual = String(formData.get("atual") ?? "");
+    const nova = String(formData.get("nova") ?? "");
+    const confirmacao = String(formData.get("confirmacao") ?? "");
+    if (!(await bcrypt.compare(atual, user.passwordHash))) throw new UserError("A senha atual está incorreta.");
+    if (nova.length < 6) throw new UserError("A nova senha precisa ter ao menos 6 caracteres.");
+    if (nova !== confirmacao) throw new UserError("A confirmação não confere com a nova senha.");
+    if (nova === atual) throw new UserError("A nova senha precisa ser diferente da atual.");
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(nova, 10) } });
+    return "Senha alterada com sucesso.";
+  });
+}
+
+const MAX_AVATAR_MB = 2;
+
+/** Identifica JPEG/PNG/WebP pelos primeiros bytes (não confia no tipo informado pelo navegador). */
+function tipoDaImagem(b: Buffer): TipoAvatar | null {
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  return null;
+}
+
+export async function alterarFoto(formData: FormData): Promise<Resultado> {
+  const r = await resultado(async () => {
+    const user = await requireUser();
+    const f = formData.get("foto");
+    if (!(f instanceof File) || f.size === 0) throw new UserError("Escolha uma foto.");
+    if (f.size > MAX_AVATAR_MB * 1024 * 1024) throw new UserError(`A foto passa de ${MAX_AVATAR_MB} MB.`);
+    const data = Buffer.from(await f.arrayBuffer());
+    const tipo = tipoDaImagem(data);
+    if (!tipo) throw new UserError("Formato não suportado. Use uma foto JPG, PNG ou WebP.");
+
+    let key: string;
+    try {
+      key = await enviarAvatar(data, tipo);
+    } catch (e) {
+      console.error("Falha ao enviar avatar ao S3:", e);
+      throw new UserError("Não foi possível salvar a foto agora. Tente novamente.");
+    }
+    try {
+      await prisma.user.update({ where: { id: user.id }, data: { avatarKey: key } });
+    } catch (e) {
+      await removerPdfs([key]);
+      throw e;
+    }
+    await removerPdfs([user.avatarKey]); // foto anterior
+    return "Foto atualizada.";
+  });
+  if (r.ok) revalidatePath("/", "layout");
+  return r;
 }
 
 /* ---------- 1. lançar ---------- */

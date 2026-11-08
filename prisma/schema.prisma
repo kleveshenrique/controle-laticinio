@@ -41,6 +41,8 @@ model User {
   name         String
   email        String       @unique
   passwordHash String
+  /// Chave da foto (avatar) no S3; null = mostra as iniciais.
+  avatarKey    String?
   permissions  Permission[]
   active       Boolean      @default(true)
   createdAt    DateTime     @default(now())

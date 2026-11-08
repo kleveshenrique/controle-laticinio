@@ -2,7 +2,7 @@ import { Observacoes } from "@/components/Observacoes";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
-import { brl, dateBR, todayISO } from "@/lib/format";
+import { brl, dateBR, STATUS, todayISO } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 
 export default async function Painel() {
@@ -28,11 +28,11 @@ export default async function Painel() {
   ]);
 
   const cards = [
-    { label: "Aguardando aprovação", v: pendentes, href: "/contas?status=PENDENTE" },
-    { label: "Aprovadas, a pagar", v: aprovadas, href: "/contas?status=APROVADA" },
-    { label: "Rejeitadas", v: rejeitadas, href: "/contas?status=REJEITADA", alert: rejeitadas._count > 0 },
-    { label: "Vencidas", v: vencidas, href: "/contas?vencidas=1", alert: vencidas._count > 0 },
-    ...(pagasMes ? [{ label: "Pagas no mês", v: pagasMes, href: "/contas?status=PAGA" }] : []),
+    { label: "Aprovação", v: pendentes, href: "/contas?status=PENDENTE", pill: STATUS.PENDENTE.cls },
+    { label: "Aprovadas", v: aprovadas, href: "/contas?status=APROVADA", pill: STATUS.APROVADA.cls },
+    { label: "Rejeitadas", v: rejeitadas, href: "/contas?status=REJEITADA", pill: STATUS.REJEITADA.cls, alert: rejeitadas._count > 0 },
+    { label: "Vencidas", v: vencidas, href: "/contas?vencidas=1", pill: "bg-orange-50 text-orange-800 border-orange-200", alert: vencidas._count > 0 },
+    ...(pagasMes ? [{ label: "Pagas no mês", v: pagasMes, href: "/contas?status=PAGA", pill: STATUS.PAGA.cls }] : []),
   ];
 
   return (
@@ -40,8 +40,8 @@ export default async function Painel() {
       <div className={`grid gap-3 sm:grid-cols-2 ${admin ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
         {cards.map((c) => (
           <Link key={c.label} href={c.href} className="card p-4 hover:border-brand-600">
-            <div className="text-xs text-muted">{c.label}</div>
-            <div className={`mt-1 text-xl font-semibold ${c.alert ? "text-red-700" : ""}`}>{brl(c.v._sum.amount)}</div>
+            <span className={`inline-block whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${c.pill}`}>{c.label}</span>
+            <div className={`mt-2 text-xl font-semibold ${c.alert ? "text-red-700" : ""}`}>{brl(c.v._sum.amount)}</div>
             <div className="text-xs text-muted">{c.v._count} conta(s)</div>
           </Link>
         ))}

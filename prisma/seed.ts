@@ -22,7 +22,9 @@ async function main() {
     await prisma.category.upsert({ where: { name }, update: {}, create: { name } });
   }
 
-  await prisma.cashRegister.upsert({ where: { name: "Caixa Principal" }, update: {}, create: { name: "Caixa Principal" } });
+  for (const name of ["Caixa Principal", "Bradesco", "Brasil"]) {
+    await prisma.cashRegister.upsert({ where: { name }, update: {}, create: { name } });
+  }
   console.log(`Admin: ${email}`);
 }
 

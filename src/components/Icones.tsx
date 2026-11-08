@@ -38,3 +38,9 @@ export const IconeAnexos = (p: P) => (
 export const IconeObservacao = (p: P) => (
   <Svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /><path d="M12 7v6" /><path d="M9 10h6" /></Svg>
 );
+
+/** Seta para a esquerda */
+export const IconeSetaEsquerda = (p: P) => <Svg {...p}><path d="m15 18-6-6 6-6" /></Svg>;
+
+/** Seta para a direita */
+export const IconeSetaDireita = (p: P) => <Svg {...p}><path d="m9 18 6-6-6-6" /></Svg>;
