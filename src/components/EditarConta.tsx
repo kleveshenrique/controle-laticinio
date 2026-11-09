@@ -4,18 +4,20 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { editarConta } from "@/app/actions";
 import { AnexosEditor, anexosParaFormData, type AnexoExistente, type NovosAnexos } from "@/components/AnexosEditor";
-import { maskMoney, parseMoney } from "@/lib/format";
+import { ehPix, maskMoney, parseMoney } from "@/lib/format";
 import { IconeEditar } from "@/components/Icones";
 import { BotaoAcao, useAcoesContas } from "@/components/AcoesContas";
 import { CampoBusca } from "@/components/CampoBusca";
 
-type Conta = { id: string; code: number; description: string; supplier: string; category: string; amount: number; dueDate: string; notes: string };
-type Dados = Pick<Conta, "description" | "supplier" | "category" | "dueDate" | "notes"> & { amount: string };
+type Conta = { id: string; code: number; description: string; supplier: string; category: string; paymentMethod: string; pixKey: string; amount: number; dueDate: string; notes: string };
+type Dados = Pick<Conta, "description" | "supplier" | "category" | "paymentMethod" | "pixKey" | "dueDate" | "notes"> & { amount: string };
 
 const dadosIniciais = (c: Conta): Dados => ({
   description: c.description,
   supplier: c.supplier,
   category: c.category,
+  paymentMethod: c.paymentMethod,
+  pixKey: c.pixKey,
   amount: maskMoney(String(Math.round(c.amount * 100))),
   dueDate: c.dueDate,
   notes: c.notes,
@@ -27,11 +29,13 @@ export function EditarConta({
   anexos,
   suppliers,
   categories,
+  paymentMethods,
 }: {
   conta: Conta & { status: "PENDENTE" | "REJEITADA" };
   anexos: AnexoExistente[];
   suppliers: string[];
   categories: string[];
+  paymentMethods: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -61,11 +65,17 @@ export function EditarConta({
     v === atual || lista.some((n) => n.toLowerCase() === v.trim().toLowerCase());
   const fornecedorOk = naLista(suppliers, conta.supplier, dados.supplier);
   const categoriaOk = Boolean(conta.category && dados.category === conta.category) || naLista(categories, "", dados.category);
+  const formaOk = Boolean(conta.paymentMethod && dados.paymentMethod === conta.paymentMethod) || naLista(paymentMethods, "", dados.paymentMethod);
+  const pix = ehPix(dados.paymentMethod);
+  // A forma atual da conta aparece na lista mesmo que tenha sido inativada depois.
+  const opcoesForma = conta.paymentMethod && !paymentMethods.includes(conta.paymentMethod) ? [conta.paymentMethod, ...paymentMethods] : paymentMethods;
   // Mesmas regras validadas no servidor (editarConta).
   const valido =
     dados.description.trim().length >= 2 &&
     fornecedorOk &&
     categoriaOk &&
+    formaOk &&
+    (!pix || dados.pixKey.trim().length >= 3) &&
     parseMoney(dados.amount) > 0 &&
     /^\d{4}-\d{2}-\d{2}$/.test(dados.dueDate);
   const set = (k: keyof Dados, v: string) => setDados((d) => ({ ...d, [k]: v }));
@@ -87,7 +97,7 @@ export function EditarConta({
                 const fd = new FormData();
                 fd.append("id", conta.id);
                 fd.append("volta", conta.status);
-                (Object.keys(dados) as (keyof Dados)[]).forEach((k) => fd.append(k, dados[k]));
+                (Object.keys(dados) as (keyof Dados)[]).forEach((k) => fd.append(k, k === "pixKey" && !pix ? "" : dados[k]));
                 anexosParaFormData(fd, novos, remover);
                 setOpen(false);
                 executar(`editar-${conta.id}`, () => editarConta(fd));
@@ -118,6 +128,30 @@ export function EditarConta({
                   <CampoBusca id={`${uid}-categ`} placeholder="Buscar categoria" opcoes={categories} value={dados.category} onChange={(v) => set("category", v)} vazio="Nenhuma categoria ativa encontrada." />
                   {dados.category.trim() && !categoriaOk && <p className="mt-1 text-xs text-red-700">Categoria não cadastrada. Escolha uma da lista.</p>}
                 </div>
+                <div>
+                  <label className="label" htmlFor={`${uid}-forma`}>Forma de pagamento</label>
+                  <select id={`${uid}-forma`} className="input" value={dados.paymentMethod} onChange={(e) => set("paymentMethod", e.target.value)}>
+                    <option value="">Selecione</option>
+                    {opcoesForma.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+                {pix ? (
+                  <div>
+                    <label className="label" htmlFor={`${uid}-pix`}>Chave Pix</label>
+                    <input
+                      id={`${uid}-pix`}
+                      className="input"
+                      placeholder="CPF/CNPJ, e-mail, telefone ou aleatória"
+                      maxLength={150}
+                      value={dados.pixKey}
+                      onChange={(e) => set("pixKey", e.target.value)}
+                    />
+                  </div>
+                ) : (
+                  <div className="hidden sm:block" />
+                )}
                 <div>
                   <label className="label" htmlFor={`${uid}-val`}>Valor (R$)</label>
                   <input

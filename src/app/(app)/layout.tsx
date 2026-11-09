@@ -13,6 +13,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/usuarios", label: "Usuários", show: can(user, "ADMIN") },
     { href: "/fornecedores", label: "Fornecedores", show: can(user, "LANCAR") },
     { href: "/categorias", label: "Categorias", show: can(user, "LANCAR") },
+    { href: "/formas-pagamento", label: "Formas de pagamento", show: can(user, "LANCAR") },
   ].filter((n) => n.show);
 
   return (

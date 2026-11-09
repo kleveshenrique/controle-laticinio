@@ -94,13 +94,24 @@ model Category {
   accounts Account[]
 }
 
+/// Formas de pagamento (Dinheiro, Boleto, Pix, Promissória...). Pix pede a chave na conta.
+model PaymentMethod {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  active   Boolean   @default(true)
+  accounts Account[]
+}
+
 model Account {
   id          String        @id @default(cuid())
   code        Int           @unique @default(autoincrement())
   description String
   supplierId  String
   categoryId  String?
-  amount      Decimal       @db.Decimal(14, 2)
+  paymentMethodId String?
+  /// Chave Pix do recebedor (quando a forma de pagamento é Pix).
+  pixKey      String?
+  amount     Decimal       @db.Decimal(14, 2)
   dueDate     DateTime      @db.Date
   notes       String?
   status      AccountStatus @default(PENDENTE)
@@ -123,6 +134,7 @@ model Account {
 
   supplier     Supplier      @relation(fields: [supplierId], references: [id])
   category     Category?     @relation(fields: [categoryId], references: [id])
+  paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
   createdBy    User          @relation("CreatedBy", fields: [createdById], references: [id])
   reviewedBy   User?         @relation("ReviewedBy", fields: [reviewedById], references: [id])
   paidBy       User?         @relation("PaidBy", fields: [paidById], references: [id])

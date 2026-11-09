@@ -22,6 +22,10 @@ async function main() {
     await prisma.category.upsert({ where: { name }, update: {}, create: { name } });
   }
 
+  for (const name of ["Dinheiro", "Boleto", "Pix", "Promissória"]) {
+    await prisma.paymentMethod.upsert({ where: { name }, update: {}, create: { name } });
+  }
+
   for (const name of ["Caixa Principal", "Bradesco", "Brasil"]) {
     await prisma.cashRegister.upsert({ where: { name }, update: {}, create: { name } });
   }

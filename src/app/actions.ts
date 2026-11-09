@@ -11,7 +11,7 @@ import { createSession, destroySession, requirePermission, requireUser, can } fr
 import { run } from "@/lib/action";
 import { UserError } from "@/lib/errors";
 import { PERMISSIONS, type PermissionName } from "@/lib/permissions";
-import { brl, dateBR, parseMoney, type AlteracaoConta } from "@/lib/format";
+import { brl, dateBR, ehPix, parseMoney, type AlteracaoConta } from "@/lib/format";
 import { MAX_ANEXOS, MAX_PDF_BYTES, MAX_PDF_MB, TIPOS_ANEXO, type TipoAnexo } from "@/lib/anexos";
 import { comPdfsNoS3, enviarAvatar, excluirPdfs, removerPdfs, type TipoAvatar } from "@/lib/storage";
 import { documentoValido, soDigitos, telefoneValido, UFS, type TipoPessoa } from "@/lib/documentos";
@@ -112,39 +112,55 @@ const rowSchema = z.object({
   description: z.string().trim().min(2, "Informe a descrição."),
   supplier: z.string().trim().min(2, "Informe o fornecedor."),
   category: z.string().trim().min(2, "Informe a categoria."),
+  paymentMethod: z.string().trim().min(2, "Informe a forma de pagamento."),
+  pixKey: z.string().trim().max(150, "Chave Pix: no máximo 150 caracteres.").optional(),
   amount: z.string(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Informe o vencimento."),
   notes: z.string().trim().max(1000, "Observações: no máximo 1000 caracteres.").optional(),
 });
 
+/** Chave Pix é obrigatória quando a forma de pagamento é Pix; nas outras formas é descartada. */
+function chavePix(forma: string, pixKey: string | undefined, prefixo = "") {
+  if (!ehPix(forma)) return null;
+  if (!pixKey || pixKey.length < 3) throw new UserError(`${prefixo}Informe a chave Pix.`);
+  return pixKey;
+}
+
 /**
- * Fornecedores e categorias só são criados pelos próprios formulários de cadastro.
+ * Fornecedores, categorias e formas de pagamento só são criados pelos próprios formulários de cadastro.
  * Aqui apenas localiza os já cadastrados (sem diferenciar maiúsculas) e devolve nome digitado → id.
  * Nome inexistente ou cadastro inativo gera erro.
  */
-async function buscarCadastros(fornecedores: string[], categorias: string[]) {
+async function buscarCadastros(fornecedores: string[], categorias: string[], formas: string[] = []) {
   const unicos = (l: string[]) => [...new Set(l)];
   const porNome = (l: string[]) => ({ OR: unicos(l).map((name) => ({ name: { equals: name, mode: "insensitive" as const } })) });
-  const [forns, cats] = await Promise.all([
-    fornecedores.length ? prisma.supplier.findMany({ where: porNome(fornecedores), select: { id: true, name: true, active: true } }) : [],
-    categorias.length ? prisma.category.findMany({ where: porNome(categorias), select: { id: true, name: true, active: true } }) : [],
+  const select = { id: true, name: true, active: true };
+  const [forns, cats, fps] = await Promise.all([
+    fornecedores.length ? prisma.supplier.findMany({ where: porNome(fornecedores), select }) : [],
+    categorias.length ? prisma.category.findMany({ where: porNome(categorias), select }) : [],
+    formas.length ? prisma.paymentMethod.findMany({ where: porNome(formas), select }) : [],
   ]);
-  const mapa = (nomes: string[], achados: { id: string; name: string; active: boolean }[], tipo: "fornecedor" | "categoria") => {
+  const textos = {
+    fornecedor: { naoCadastrado: (n: string) => `O fornecedor "${n}" não está cadastrado. Cadastre-o em Fornecedores (botão "+") antes de lançar.`, inativo: "O fornecedor", genero: "o" },
+    categoria: { naoCadastrado: (n: string) => `A categoria "${n}" não está cadastrada. Cadastre-a em Categorias (botão "+") antes de lançar.`, inativo: "A categoria", genero: "a" },
+    forma: { naoCadastrado: (n: string) => `A forma de pagamento "${n}" não está cadastrada. Cadastre-a em Formas de pagamento antes de lançar.`, inativo: "A forma de pagamento", genero: "a" },
+  };
+  const mapa = (nomes: string[], achados: { id: string; name: string; active: boolean }[], tipo: keyof typeof textos) => {
+    const t = textos[tipo];
     const m = new Map<string, { id: string; name: string }>();
     for (const nome of unicos(nomes)) {
       const c = achados.find((a) => a.name === nome) ?? achados.find((a) => a.name.toLowerCase() === nome.toLowerCase());
-      if (!c)
-        throw new UserError(
-          tipo === "fornecedor"
-            ? `O fornecedor "${nome}" não está cadastrado. Cadastre-o em Fornecedores (botão "+") antes de lançar.`
-            : `A categoria "${nome}" não está cadastrada. Cadastre-a em Categorias (botão "+") antes de lançar.`,
-        );
-      if (!c.active) throw new UserError(`${tipo === "fornecedor" ? "O fornecedor" : "A categoria"} "${c.name}" está inativ${tipo === "fornecedor" ? "o" : "a"} no cadastro.`);
+      if (!c) throw new UserError(t.naoCadastrado(nome));
+      if (!c.active) throw new UserError(`${t.inativo} "${c.name}" está inativ${t.genero} no cadastro.`);
       m.set(nome, { id: c.id, name: c.name });
     }
     return m;
   };
-  return { fornecedores: mapa(fornecedores, forns, "fornecedor"), categorias: mapa(categorias, cats, "categoria") };
+  return {
+    fornecedores: mapa(fornecedores, forns, "fornecedor"),
+    categorias: mapa(categorias, cats, "categoria"),
+    formas: mapa(formas, fps, "forma"),
+  };
 }
 
 /**
@@ -193,10 +209,10 @@ export async function lancarContas(formData: FormData) {
       parsed.data.map(async (r, i) => {
         const amount = parseMoney(r.amount);
         if (!(amount > 0)) throw new UserError(`Linha ${i + 1}: valor inválido.`);
-        return { ...r, amount };
+        return { ...r, amount, pixKey: chavePix(r.paymentMethod, r.pixKey, `Linha ${i + 1}: `) };
       }),
     );
-    const cadastros = await buscarCadastros(rows.map((r) => r.supplier), rows.map((r) => r.category));
+    const cadastros = await buscarCadastros(rows.map((r) => r.supplier), rows.map((r) => r.category), rows.map((r) => r.paymentMethod));
     const pdfs = (
       await Promise.all(
         rows.map(async (_, i) =>
@@ -219,6 +235,8 @@ export async function lancarContas(formData: FormData) {
               description: r.description,
               supplierId: cadastros.fornecedores.get(r.supplier)!.id,
               categoryId: cadastros.categorias.get(r.category)!.id,
+              paymentMethodId: cadastros.formas.get(r.paymentMethod)!.id,
+              pixKey: r.pixKey,
               amount: r.amount,
               dueDate: new Date(r.dueDate + "T00:00:00.000Z"),
               notes: r.notes || null,
@@ -299,7 +317,7 @@ export async function editarConta(formData: FormData) {
     const user = await requireUser();
     const acc = await prisma.account.findUnique({
       where: { id: String(formData.get("id")) },
-      include: { supplier: true, category: true, attachments: { select: { id: true, kind: true, fileName: true, storageKey: true } } },
+      include: { supplier: true, category: true, paymentMethod: true, attachments: { select: { id: true, kind: true, fileName: true, storageKey: true } } },
     });
     if (!acc) throw new UserError("Conta não encontrada.");
     if (acc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem lançou (ou o administrador) pode editar a conta.");
@@ -311,6 +329,8 @@ export async function editarConta(formData: FormData) {
       description: formData.get("description") ?? "",
       supplier: formData.get("supplier") ?? "",
       category: formData.get("category") ?? "",
+      paymentMethod: formData.get("paymentMethod") ?? "",
+      pixKey: formData.get("pixKey") ?? "",
       amount: formData.get("amount") ?? "",
       dueDate: formData.get("dueDate") ?? "",
       notes: formData.get("notes") ?? "",
@@ -322,9 +342,12 @@ export async function editarConta(formData: FormData) {
     // O que não mudou fica como está (mesmo que o cadastro tenha sido inativado depois); o que mudou precisa estar cadastrado e ativo.
     const mudouForn = r.supplier !== acc.supplier.name;
     const mudouCat = !acc.category || r.category !== acc.category.name;
-    const cadastros = await buscarCadastros(mudouForn ? [r.supplier] : [], mudouCat ? [r.category] : []);
+    const mudouForma = !acc.paymentMethod || r.paymentMethod !== acc.paymentMethod.name;
+    const cadastros = await buscarCadastros(mudouForn ? [r.supplier] : [], mudouCat ? [r.category] : [], mudouForma ? [r.paymentMethod] : []);
     const supplier = mudouForn ? cadastros.fornecedores.get(r.supplier)! : { id: acc.supplierId, name: acc.supplier.name };
     const category = mudouCat || !acc.category ? cadastros.categorias.get(r.category)! : { id: acc.category.id, name: acc.category.name };
+    const forma = mudouForma || !acc.paymentMethod ? cadastros.formas.get(r.paymentMethod)! : { id: acc.paymentMethod.id, name: acc.paymentMethod.name };
+    const pixKey = chavePix(forma.name, r.pixKey);
 
     const { remover, novos } = await lerAlteracoesAnexos(formData, acc.attachments, {
       podeAlterar: (k) => k !== "NOTA_FISCAL",
@@ -339,6 +362,8 @@ export async function editarConta(formData: FormData) {
     comparar("Descrição", acc.description, r.description);
     comparar("Fornecedor", acc.supplier.name, supplier.name);
     comparar("Categoria", acc.category?.name ?? "", category.name);
+    comparar("Forma de pagamento", acc.paymentMethod?.name ?? "", forma.name);
+    comparar("Chave Pix", acc.pixKey ?? "", pixKey ?? "");
     comparar("Valor", brl(acc.amount), brl(amount));
     comparar("Vencimento", dateBR(acc.dueDate), dateBR(dueDate));
     comparar("Observações", acc.notes ?? "", r.notes ?? "");
@@ -354,6 +379,8 @@ export async function editarConta(formData: FormData) {
           description: r.description,
           supplierId: supplier.id,
           categoryId: category.id,
+          paymentMethodId: forma.id,
+          pixKey,
           amount,
           dueDate,
           notes: r.notes || null,
@@ -708,6 +735,44 @@ export async function salvarCategoria(formData: FormData) {
     }
   } catch {}
   await run(volta ?? (id ? "/categorias" : "/categorias/nova"), volta ?? "/categorias", async () => (await gravarCategoria(formData)).msg);
+}
+
+/* ---------- formas de pagamento ---------- */
+
+/** Valida e grava uma forma de pagamento (campo "id" vazio = nova). */
+async function gravarFormaPagamento(formData: FormData) {
+  await requirePermission("LANCAR");
+  const id = String(formData.get("id") ?? "");
+  const name = String(formData.get("name") ?? "").trim().replace(/\s+/g, " ");
+  const active = formData.get("active") === "on";
+  if (name.length < 2) throw new UserError("Informe o nome da forma de pagamento.");
+  if (name.length > 60) throw new UserError("Nome da forma de pagamento: no máximo 60 caracteres.");
+  const mesmoNome = await prisma.paymentMethod.findFirst({
+    where: { name: { equals: name, mode: "insensitive" }, id: { not: id || undefined } },
+    select: { id: true },
+  });
+  if (mesmoNome) throw new UserError(`Já existe uma forma de pagamento chamada "${name}".`);
+  if (id) {
+    const res = await prisma.paymentMethod.updateMany({ where: { id }, data: { name, active } });
+    if (!res.count) throw new UserError("Forma de pagamento não encontrada.");
+    return `Forma de pagamento "${name}" atualizada.`;
+  }
+  await prisma.paymentMethod.create({ data: { name, active } });
+  return `Forma de pagamento "${name}" cadastrada.`;
+}
+
+/** Tela de formas de pagamento: grava e volta para a lista (mantendo aba e busca). */
+export async function salvarFormaPagamento(formData: FormData) {
+  let volta = "/formas-pagamento";
+  try {
+    const ref = new URL(headers().get("referer") ?? "");
+    if (ref.pathname === "/formas-pagamento") {
+      ref.searchParams.delete("ok");
+      ref.searchParams.delete("erro");
+      volta = `/formas-pagamento?${ref.searchParams.toString()}`;
+    }
+  } catch {}
+  await run(volta, volta, () => gravarFormaPagamento(formData));
 }
 
 /* ---------- cadastro rápido (modal no lançamento de contas) ---------- */

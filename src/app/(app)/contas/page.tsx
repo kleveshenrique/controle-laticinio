@@ -2,7 +2,7 @@ import { Observacoes } from "@/components/Observacoes";
 import type { AccountStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
-import { brl, dateBR, dateTimeBR, STATUS, todayISO, VENCIDAS_CLS } from "@/lib/format";
+import { brl, dateBR, dateTimeBR, formaPagamentoTexto, STATUS, todayISO, VENCIDAS_CLS } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Anexos } from "@/components/Anexos";
 import { GerenciarAnexos } from "@/components/GerenciarAnexos";
@@ -42,7 +42,7 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
     where,
     orderBy: [{ dueDate: "asc" }, { code: "asc" }],
     take: 500,
-    include: { supplier: true, category: true, extraNotes: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, createdBy: true, reviewedBy: true, paidBy: true, canceledBy: true, cashRegister: true, edits: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, attachments: { select: { id: true, kind: true, fileName: true }, orderBy: { createdAt: "asc" } }, rejections: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } } },
+    include: { supplier: true, category: true, paymentMethod: { select: { name: true } }, extraNotes: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, createdBy: true, reviewedBy: true, paidBy: true, canceledBy: true, cashRegister: true, edits: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, attachments: { select: { id: true, kind: true, fileName: true }, orderBy: { createdAt: "asc" } }, rejections: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } } },
   });
   const admin = can(user, "ADMIN");
   const aprovador = can(user, "APROVAR");
@@ -50,12 +50,13 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
 
   // Sugestões de fornecedor/categoria para o modal de edição (só necessário se houver conta editável).
   const precisaListas = contas.some((a) => a.status === "PENDENTE" || a.status === "REJEITADA");
-  const [suppliers, categories] = precisaListas
+  const [suppliers, categories, paymentMethods] = precisaListas
     ? await Promise.all([
         prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }).then((l) => l.map((s) => s.name)),
         prisma.category.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }).then((l) => l.map((c) => c.name)),
+        prisma.paymentMethod.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }).then((l) => l.map((p) => p.name)),
       ])
-    : [[], []];
+    : [[], [], []];
 
   const tabs: [string, string, string?][] = [["TODAS", "Todas"], ...Object.entries(STATUS).map(([k, v]) => [k, "tab" in v ? v.tab : v.label, v.cls] as [string, string, string])];
 
@@ -99,7 +100,7 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
                 <td className="td">
                   <Observacoes
                     className=""
-                    conta={<><div className="text-sm font-medium">{a.supplier.name}</div><div className="text-muted">{a.description}{a.category ? ` · ${a.category.name}` : ""}</div></>}
+                    conta={<><div className="text-sm font-medium">{a.supplier.name}</div><div className="text-muted">{a.description}{a.category ? ` · ${a.category.name}` : ""}{a.paymentMethod ? ` · ${formaPagamentoTexto(a.paymentMethod.name, a.pixKey)}` : ""}</div></>}
                     notes={a.notes} autor={{ name: a.createdBy.name, createdAt: a.createdAt }} extras={a.extraNotes} rejeicoes={a.rejections} edicoes={a.edits} />
                   <Anexos anexos={a.attachments} />
                   {/* Histórico: quem lançou, analisou, cancelou, editou e pagou. */}
@@ -146,6 +147,8 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
                             description: a.description,
                             supplier: a.supplier.name,
                             category: a.category?.name ?? "",
+                            paymentMethod: a.paymentMethod?.name ?? "",
+                            pixKey: a.pixKey ?? "",
                             amount: Number(a.amount),
                             dueDate: a.dueDate.toISOString().slice(0, 10),
                             notes: a.notes ?? "",
@@ -153,6 +156,7 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
                           anexos={a.attachments}
                           suppliers={suppliers}
                           categories={categories}
+                          paymentMethods={paymentMethods}
                         />
                       )}
                       <BotaoAcaoConta id={a.id} chave={`cancelar-dono-${a.id}`} acao={cancelar} className="btn btn-danger btn-icon" title="Cancelar conta">

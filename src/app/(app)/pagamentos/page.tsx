@@ -2,7 +2,7 @@ import { Observacoes } from "@/components/Observacoes";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
-import { brl, dateBR, dateTimeBR, todayISO } from "@/lib/format";
+import { brl, dateBR, dateTimeBR, formaPagamentoTexto, todayISO } from "@/lib/format";
 import { Anexos } from "@/components/Anexos";
 import { PagarConta } from "@/components/PagarConta";
 import { GerenciarAnexos } from "@/components/GerenciarAnexos";
@@ -17,7 +17,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
     prisma.account.findMany({
       where: { status: "APROVADA" },
       orderBy: [{ dueDate: "asc" }, { code: "asc" }],
-      include: { supplier: true, createdBy: { select: { name: true } }, reviewedBy: true, extraNotes: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, edits: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, rejections: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, attachments: { select: { id: true, kind: true, fileName: true }, orderBy: { createdAt: "asc" } } },
+      include: { supplier: true, paymentMethod: { select: { name: true } }, createdBy: { select: { name: true } }, reviewedBy: true, extraNotes: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, edits: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, rejections: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } }, attachments: { select: { id: true, kind: true, fileName: true }, orderBy: { createdAt: "asc" } } },
     }),
     prisma.cashRegister.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.account.findMany({
@@ -50,7 +50,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
                     <tr key={a.id} className={own ? "opacity-60" : ""}>
                       <td className="td text-muted">{a.code}</td>
                       <td className={`td ${atrasada ? "font-medium text-red-700" : ""}`}>{dateBR(a.dueDate)}{atrasada && <div className="text-xs">vencida</div>}</td>
-                      <td className="td"><Observacoes className="" conta={<><div className="text-sm font-medium">{a.supplier.name}</div><div className="text-muted">{a.description}</div></>} notes={a.notes} autor={{ name: a.createdBy.name, createdAt: a.createdAt }} extras={a.extraNotes} rejeicoes={a.rejections} edicoes={a.edits} /><Anexos anexos={a.attachments} /></td>
+                      <td className="td"><Observacoes className="" conta={<><div className="text-sm font-medium">{a.supplier.name}</div><div className="text-muted">{a.description}{a.paymentMethod ? ` · ${formaPagamentoTexto(a.paymentMethod.name, a.pixKey)}` : ""}</div></>} notes={a.notes} autor={{ name: a.createdBy.name, createdAt: a.createdAt }} extras={a.extraNotes} rejeicoes={a.rejections} edicoes={a.edits} /><Anexos anexos={a.attachments} /></td>
                       <td className="td text-xs text-muted">{a.reviewedBy?.name}{own && <div>(você — outra pessoa paga)</div>}</td>
                       <td className="td text-right font-medium">{brl(a.amount)}</td>
                       <td className="td">

@@ -11,9 +11,10 @@ export default async function NovaConta({ searchParams }: { searchParams: { erro
     if (e instanceof UserError) redirect("/contas?erro=" + encodeURIComponent(e.message));
     throw e;
   }
-  const [suppliers, categories] = await Promise.all([
+  const [suppliers, categories, paymentMethods] = await Promise.all([
     prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }),
     prisma.category.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }),
+    prisma.paymentMethod.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }),
   ]);
 
   return (
@@ -21,7 +22,7 @@ export default async function NovaConta({ searchParams }: { searchParams: { erro
       <h1 className="mb-1 text-lg font-semibold">Lançar contas a pagar</h1>
       <p className="mb-4 text-sm text-muted">Preencha quantas linhas precisar. Linhas em branco são ignoradas. Depois de lançadas, as contas aguardam aprovação.</p>
       <div className="card p-4">
-        <LancamentoForm suppliers={suppliers.map((s) => s.name)} categories={categories.map((c) => c.name)} />
+        <LancamentoForm suppliers={suppliers.map((s) => s.name)} categories={categories.map((c) => c.name)} paymentMethods={paymentMethods.map((p) => p.name)} />
       </div>
     </div>
   );

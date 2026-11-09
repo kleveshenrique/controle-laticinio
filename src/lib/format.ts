@@ -31,6 +31,13 @@ export function parseMoney(input: string): number {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
 }
 
+/** A forma de pagamento é Pix (ex.: "Pix", "PIX Bradesco")? Nesse caso a conta precisa da chave Pix. */
+export const ehPix = (formaPagamento: string | null | undefined) => /\bpix\b/i.test(formaPagamento ?? "");
+
+/** Texto da forma de pagamento para listas/histórico: "Pix (chave: ...)" ou só o nome. */
+export const formaPagamentoTexto = (forma: string | null | undefined, chavePix: string | null | undefined) =>
+  forma ? (ehPix(forma) && chavePix ? `${forma} (chave: ${chavePix})` : forma) : "";
+
 /** Uma alteração registrada no histórico de edição de uma conta (valores já formatados para exibição). */
 export type AlteracaoConta = { campo: string; de: string; para: string };
 
