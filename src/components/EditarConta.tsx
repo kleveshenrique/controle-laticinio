@@ -8,9 +8,18 @@ import { ehPix, maskMoney, parseMoney } from "@/lib/format";
 import { IconeEditar } from "@/components/Icones";
 import { BotaoAcao, useAcoesContas } from "@/components/AcoesContas";
 import { CampoBusca } from "@/components/CampoBusca";
+import { ISO, MAX_PARCELAS, numParcelas, parcelasValidas, ParcelasEditor, refazParcelas, type Parcela } from "@/components/ParcelasEditor";
 
-type Conta = { id: string; code: number; description: string; supplier: string; category: string; paymentMethod: string; pixKey: string; amount: number; dueDate: string; notes: string };
-type Dados = Pick<Conta, "description" | "supplier" | "category" | "paymentMethod" | "pixKey" | "dueDate" | "notes"> & { amount: string };
+type Conta = { id: string; code: number; description: string; supplier: string; category: string; paymentMethod: string; pixKey: string; amount: number; dueDate: string; notes: string;
+  /** Parcelas da conta parcelada (vazio quando não é parcelada). */
+  parcelas: { amount: number; dueDate: string }[];
+};
+type Dados = Pick<Conta, "description" | "supplier" | "category" | "paymentMethod" | "pixKey" | "dueDate" | "notes"> & {
+  amount: string;
+  qtdParcelas: string;
+  parcelas: Parcela[];
+};
+const moeda = (v: number) => maskMoney(String(Math.round(v * 100)));
 
 const dadosIniciais = (c: Conta): Dados => ({
   description: c.description,
@@ -18,9 +27,11 @@ const dadosIniciais = (c: Conta): Dados => ({
   category: c.category,
   paymentMethod: c.paymentMethod,
   pixKey: c.pixKey,
-  amount: maskMoney(String(Math.round(c.amount * 100))),
+  amount: moeda(c.amount),
   dueDate: c.dueDate,
   notes: c.notes,
+  qtdParcelas: String(Math.max(1, c.parcelas.length)),
+  parcelas: c.parcelas.length > 1 ? c.parcelas.map((p) => ({ amount: moeda(p.amount), dueDate: p.dueDate })) : [],
 });
 
 /** Botão "Editar" de uma conta aguardando aprovação: abre um modal para alterar os dados e os anexos (pedido e boletos). */
@@ -31,7 +42,8 @@ export function EditarConta({
   categories,
   paymentMethods,
 }: {
-  conta: Conta & { status: "PENDENTE" | "REJEITADA" };
+  /** APROVADA: edição de uma parcela/conta já aprovada (sem parcelamento nem anexos, que ficam no botão "Anexar"). */
+  conta: Conta & { status: "PENDENTE" | "REJEITADA" | "APROVADA" };
   anexos: AnexoExistente[];
   suppliers: string[];
   categories: string[];
@@ -69,6 +81,11 @@ export function EditarConta({
   const pix = ehPix(dados.paymentMethod);
   // A forma atual da conta aparece na lista mesmo que tenha sido inativada depois.
   const opcoesForma = conta.paymentMethod && !paymentMethods.includes(conta.paymentMethod) ? [conta.paymentMethod, ...paymentMethods] : paymentMethods;
+  const aprovada = conta.status === "APROVADA";
+  const n = aprovada ? 1 : numParcelas(dados.qtdParcelas);
+  // No máximo um boleto por parcela (na aprovada os anexos não são editados aqui).
+  const qtdBoletos = anexos.filter((a) => a.kind === "BOLETO" && !remover.includes(a.id)).length + (novos.BOLETO?.length ?? 0);
+  const boletosDemais = !aprovada && qtdBoletos > n;
   // Mesmas regras validadas no servidor (editarConta).
   const valido =
     dados.description.trim().length >= 2 &&
@@ -77,12 +94,22 @@ export function EditarConta({
     formaOk &&
     (!pix || dados.pixKey.trim().length >= 3) &&
     parseMoney(dados.amount) > 0 &&
-    /^\d{4}-\d{2}-\d{2}$/.test(dados.dueDate);
-  const set = (k: keyof Dados, v: string) => setDados((d) => ({ ...d, [k]: v }));
+    (n > 1 ? parcelasValidas(dados.amount, dados.parcelas) : ISO.test(dados.dueDate)) &&
+    !boletosDemais;
+  const set = (k: Exclude<keyof Dados, "parcelas">, v: string) => setDados((d) => ({ ...d, [k]: v }));
+  // Mudar o valor ou a quantidade de parcelas redistribui o valor entre as parcelas.
+  const setParcelado = (k: "amount" | "qtdParcelas", v: string) =>
+    setDados((d) => {
+      const novo = { ...d, [k]: v };
+      const parcelas = refazParcelas(novo.amount, novo.qtdParcelas, novo.dueDate, novo.parcelas);
+      return { ...novo, parcelas, dueDate: parcelas.length ? novo.dueDate : novo.parcelas[0]?.dueDate || novo.dueDate };
+    });
+  const setParcela = (k: number, campo: keyof Parcela, v: string) =>
+    setDados((d) => ({ ...d, parcelas: d.parcelas.map((p, x) => (x === k ? { ...p, [campo]: v } : p)) }));
 
   return (
     <>
-      <BotaoAcao acoes={acoes} chave={`editar-${conta.id}`} className="btn btn-icon" title="Editar conta" onClick={() => setOpen(true)}>
+      <BotaoAcao acoes={acoes} chave={`editar-${conta.id}`} className="btn btn-icon" title={aprovada ? "Editar parcela" : "Editar conta"} onClick={() => setOpen(true)}>
         <IconeEditar />
       </BotaoAcao>
 
@@ -97,17 +124,24 @@ export function EditarConta({
                 const fd = new FormData();
                 fd.append("id", conta.id);
                 fd.append("volta", conta.status);
-                (Object.keys(dados) as (keyof Dados)[]).forEach((k) => fd.append(k, k === "pixKey" && !pix ? "" : dados[k]));
-                anexosParaFormData(fd, novos, remover);
+                const { qtdParcelas, parcelas, ...campos } = dados;
+                (Object.keys(campos) as (keyof typeof campos)[]).forEach((k) => fd.append(k, k === "pixKey" && !pix ? "" : campos[k]));
+                if (n > 1) {
+                  fd.set("dueDate", parcelas[0].dueDate);
+                  fd.append("parcelas", JSON.stringify(parcelas));
+                }
+                if (!aprovada) anexosParaFormData(fd, novos, remover);
                 setOpen(false);
                 executar(`editar-${conta.id}`, () => editarConta(fd));
               }}
             >
               <div>
-                <h2 className="text-base font-semibold">Editar conta #{conta.code}</h2>
+                <h2 className="text-base font-semibold">{aprovada ? "Editar parcela" : "Editar conta"} #{conta.code}</h2>
                 <p className="text-sm text-muted">
-                  {conta.status === "REJEITADA"
-                    ? "As alterações ficam registradas no histórico da conta. Depois de salvar, use “Reenviar para aprovação”."
+                  {aprovada
+                    ? "A conta continua aprovada; as alterações ficam registradas no histórico. Anexos: use o botão “Anexar”."
+                    : conta.status === "REJEITADA"
+                    ? "As alterações ficam registradas no histórico da conta e, ao salvar, a conta volta automaticamente para aprovação."
                     : "A conta continua aguardando aprovação depois de salva."}
                 </p>
               </div>
@@ -152,27 +186,54 @@ export function EditarConta({
                 ) : (
                   <div className="hidden sm:block" />
                 )}
-                <div>
-                  <label className="label" htmlFor={`${uid}-val`}>Valor (R$)</label>
-                  <input
-                    id={`${uid}-val`}
-                    className="input text-right"
-                    inputMode="numeric"
-                    placeholder="R$ 0,00"
-                    value={dados.amount}
-                    onChange={(e) => set("amount", maskMoney(e.target.value))}
-                  />
+                <div className={`grid gap-3 sm:col-span-2 ${aprovada ? "sm:grid-cols-2" : "sm:grid-cols-[1fr_0.6fr_1fr]"}`}>
+                  <div>
+                    <label className="label" htmlFor={`${uid}-val`}>Valor (R$)</label>
+                    <input
+                      id={`${uid}-val`}
+                      className="input text-right"
+                      inputMode="numeric"
+                      placeholder="R$ 0,00"
+                      value={dados.amount}
+                      onChange={(e) => setParcelado("amount", maskMoney(e.target.value))}
+                    />
+                  </div>
+                  {!aprovada && (
+                  <div>
+                    <label className="label" htmlFor={`${uid}-parc`}>Parcelas</label>
+                    <input
+                      id={`${uid}-parc`}
+                      className="input text-center"
+                      type="number"
+                      min={1}
+                      max={MAX_PARCELAS}
+                      value={dados.qtdParcelas}
+                      onChange={(e) => setParcelado("qtdParcelas", e.target.value)}
+                      onBlur={() => set("qtdParcelas", String(n))}
+                    />
+                  </div>
+                  )}
+                  <div>
+                    <label className="label" htmlFor={`${uid}-venc`}>Vencimento</label>
+                    {n > 1 ? (
+                      <div className="input flex items-center text-xs text-muted">{n} vencimentos abaixo</div>
+                    ) : (
+                      <input id={`${uid}-venc`} className="input" type="date" value={dados.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <label className="label" htmlFor={`${uid}-venc`}>Vencimento</label>
-                  <input id={`${uid}-venc`} className="input" type="date" value={dados.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
-                </div>
+                {n > 1 && (
+                  <div className="sm:col-span-2">
+                    <ParcelasEditor amount={dados.amount} parcelas={dados.parcelas} onChange={setParcela} colunas="grid-cols-1" />
+                  </div>
+                )}
                 <div className="sm:col-span-2">
                   <label className="label" htmlFor={`${uid}-obs`}>Observações (opcional)</label>
                   <textarea id={`${uid}-obs`} className="input min-h-[60px]" rows={2} maxLength={1000} value={dados.notes} onChange={(e) => set("notes", e.target.value)} />
                 </div>
               </div>
 
+              {!aprovada && (
               <AnexosEditor
                 tipos={["PEDIDO", "BOLETO"]}
                 anexos={anexos}
@@ -182,7 +243,14 @@ export function EditarConta({
                 onRemover={setRemover}
                 podeAlterar={() => true}
                 podeRemover={() => true}
+                limites={{ BOLETO: n }}
               />
+              )}
+              {boletosDemais && (
+                <p className="text-xs text-red-700">
+                  São {qtdBoletos} boletos para {n} parcela(s): no máximo um boleto por parcela. Remova {qtdBoletos - n} boleto(s) ou aumente as parcelas.
+                </p>
+              )}
 
               <div className="flex justify-end gap-2 border-t border-line pt-3">
                 <button type="button" className="btn" onClick={() => setOpen(false)}>Voltar</button>

@@ -13,8 +13,11 @@ export function PdfPicker({
   onChange,
   disabled,
   disabledHint,
-  max = MAX_ANEXOS,
+  limite = MAX_ANEXOS,
+  max = limite,
 }: {
+  /** Total de arquivos permitido para o tipo (padrão: MAX_ANEXOS), exibido como "x/limite". */
+  limite?: number;
   label: string;
   /** Texto do botão de adicionar (ex.: "Pedido PDF"). */
   buttonLabel: string;
@@ -41,7 +44,7 @@ export function PdfPicker({
       return pdf && f.size <= MAX_PDF_BYTES;
     });
     const todos = [...files, ...aceitos];
-    if (todos.length > max) avisos.push(`máximo de ${MAX_ANEXOS} arquivos`);
+    if (todos.length > max) avisos.push(`máximo de ${limite} arquivo(s)`);
     setAviso(avisos.join(" · "));
     onChange(todos.slice(0, max));
     if (input.current) input.current.value = "";
@@ -51,7 +54,7 @@ export function PdfPicker({
     <div>
       <div className="mb-1 flex items-center justify-between gap-2">
         <label htmlFor={id} className="text-xs font-medium text-muted">
-          {label} <span className="font-normal">({MAX_ANEXOS - max + files.length}/{MAX_ANEXOS} PDF)</span>
+          {label} <span className="font-normal">({limite - max + files.length}/{limite} PDF)</span>
         </label>
         <button type="button" className="btn px-2 py-0.5 text-xs" disabled={cheio || disabled} title={disabled ? disabledHint : undefined} onClick={() => input.current?.click()}>
           + {buttonLabel}

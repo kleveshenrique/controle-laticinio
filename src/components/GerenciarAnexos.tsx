@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { gerenciarAnexos } from "@/app/actions";
 import { AnexosEditor, alterouAnexos, anexosParaFormData, type AnexoExistente, type NovosAnexos } from "@/components/AnexosEditor";
-import { IconeAnexos } from "@/components/Icones";
 import { BotaoAcao, useAcoesContas } from "@/components/AcoesContas";
+import { motivoNaoAnexa, podeAnexar } from "@/lib/anexos";
 
 /**
- * Botão "Anexos" de uma conta aprovada/paga: abre um modal para incluir nota fiscal e boletos.
+ * Botão "Anexar" de uma conta aprovada/paga: abre um modal para incluir nota fiscal e boletos.
  * O pedido só pode ser alterado (e arquivos só podem ser removidos) pelo administrador.
  */
 export function GerenciarAnexos({
@@ -18,7 +18,10 @@ export function GerenciarAnexos({
   anexos,
   admin,
   volta,
+  primeiraParcela = true,
 }: {
+  /** Conta sem parcelamento ou 1ª parcela: só nela a nota fiscal pode ser anexada. */
+  primeiraParcela?: boolean;
   id: string;
   code: number;
   status: "APROVADA" | "PAGA";
@@ -51,8 +54,8 @@ export function GerenciarAnexos({
 
   return (
     <>
-      <BotaoAcao acoes={acoes} chave={`anexos-${id}`} className="btn btn-icon" title="Gerenciar anexos" onClick={() => setOpen(true)}>
-        <IconeAnexos />
+      <BotaoAcao acoes={acoes} chave={`anexos-${id}`} className="btn px-2 py-0.5 text-xs" title="Gerenciar anexos" onClick={() => setOpen(true)}>
+        Anexar
       </BotaoAcao>
 
       {mounted &&
@@ -74,19 +77,25 @@ export function GerenciarAnexos({
               <div>
                 <h2 className="text-base font-semibold">Anexos da conta #{code}</h2>
                 <p className="text-sm text-muted">
-                  Inclua a nota fiscal e boletos, se necessário.{!admin && " O pedido só pode ser alterado pelo administrador."}
+                  {status === "APROVADA"
+                    ? primeiraParcela
+                      ? "Inclua a nota fiscal e o boleto, se necessário."
+                      : "Inclua o boleto desta parcela, se necessário. A nota fiscal é anexada na 1ª parcela."
+                    : "Inclua a nota fiscal e o boleto, se necessário."}
                 </p>
               </div>
 
               <AnexosEditor
                 tipos={["PEDIDO", "NOTA_FISCAL", "BOLETO"]}
+                limites={{ BOLETO: 1 }}
                 anexos={anexos}
                 novos={novos}
                 onNovos={setNovos}
                 remover={remover}
                 onRemover={setRemover}
-                podeAlterar={(k) => admin || k !== "PEDIDO"}
+                podeAlterar={(k) => podeAnexar(k, { status, admin, primeiraParcela })}
                 podeRemover={() => admin}
+                motivoBloqueio={(k) => motivoNaoAnexa(k, { status, primeiraParcela })}
               />
 
               <div className="flex justify-end gap-2 border-t border-line pt-3">

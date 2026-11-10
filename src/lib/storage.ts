@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DeleteObjectsCommand, GetObjectCommand, ListObjectVersionsCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CopyObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectVersionsCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 /**
  * Armazenamento dos PDFs anexados (pedido, boletos, nota fiscal) no AWS S3.
@@ -28,6 +28,20 @@ export async function enviarPdf(data: Buffer, fileName: string): Promise<string>
       ContentType: "application/pdf",
       ContentLength: data.length,
       Metadata: { "original-name": encodeURIComponent(fileName) },
+      ServerSideEncryption: "AES256",
+    }),
+  );
+  return key;
+}
+
+/** Copia um PDF dentro do bucket e devolve a chave da cópia (ex.: ao desmembrar uma conta parcelada). */
+export async function copiarPdf(origem: string): Promise<string> {
+  const key = `${prefixo()}/${new Date().toISOString().slice(0, 7)}/${randomUUID()}.pdf`;
+  await s3().send(
+    new CopyObjectCommand({
+      Bucket: bucket(),
+      Key: key,
+      CopySource: `${bucket()}/${origem.split("/").map(encodeURIComponent).join("/")}`,
       ServerSideEncryption: "AES256",
     }),
   );

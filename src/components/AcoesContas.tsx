@@ -14,7 +14,7 @@ export type Acoes = {
 const Ctx = createContext<Acoes | null>(null);
 
 /**
- * Coordena as ações da lista de contas (aprovar, rejeitar, editar, cancelar, reenviar):
+ * Coordena as ações da lista de contas (aprovar, rejeitar, editar, cancelar):
  * enquanto uma está em andamento, todos os botões ficam desabilitados e o botão
  * clicado mostra um spinner.
  */
@@ -78,7 +78,7 @@ export function BotaoAcao({
   );
 }
 
-/** Botão que executa uma server action simples com o id da conta (ex.: reenviar, cancelar). */
+/** Botão que executa uma server action simples com o id da conta (ex.: cancelar). */
 export function BotaoAcaoConta({
   id,
   chave,

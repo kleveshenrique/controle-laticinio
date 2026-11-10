@@ -38,6 +38,15 @@ export const ehPix = (formaPagamento: string | null | undefined) => /\bpix\b/i.t
 export const formaPagamentoTexto = (forma: string | null | undefined, chavePix: string | null | undefined) =>
   forma ? (ehPix(forma) && chavePix ? `${forma} (chave: ${chavePix})` : forma) : "";
 
+/** Uma parcela de conta parcelada (campo Account.parcelas). */
+export type ParcelaConta = { amount: number; dueDate: string };
+
+/** Lê o campo JSON Account.parcelas; devolve [] quando a conta não é parcelada. */
+export const lerParcelas = (json: unknown): ParcelaConta[] =>
+  Array.isArray(json)
+    ? json.filter((p): p is ParcelaConta => typeof p?.amount === "number" && typeof p?.dueDate === "string")
+    : [];
+
 /** Uma alteração registrada no histórico de edição de uma conta (valores já formatados para exibição). */
 export type AlteracaoConta = { campo: string; de: string; para: string };
 

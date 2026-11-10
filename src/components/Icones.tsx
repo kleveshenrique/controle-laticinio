@@ -19,24 +19,24 @@ export const IconeRejeitar = (p: P) => <Svg {...p}><path d="M18 6 6 18" /><path 
 /** Cancelar a conta */
 export const IconeCancelar = (p: P) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="m5.6 5.6 12.8 12.8" /></Svg>;
 
+/** Excluir (lixeira) */
+export const IconeExcluir = (p: P) => (
+  <Svg {...p}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></Svg>
+);
+
 /** Editar */
 export const IconeEditar = (p: P) => (
   <Svg {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></Svg>
 );
 
-/** Reenviar para aprovação */
-export const IconeReenviar = (p: P) => (
-  <Svg {...p}><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></Svg>
-);
-
-/** Anexos */
-export const IconeAnexos = (p: P) => (
-  <Svg {...p}><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></Svg>
-);
-
 /** Adicionar observação */
 export const IconeObservacao = (p: P) => (
   <Svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /><path d="M12 7v6" /><path d="M9 10h6" /></Svg>
+);
+
+/** Ver observações (balão de mensagem) */
+export const IconeMensagem = (p: P) => (
+  <Svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /><path d="M8 9h8" /><path d="M8 13h5" /></Svg>
 );
 
 /** Seta para a esquerda */

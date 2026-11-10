@@ -5,15 +5,15 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import type { AccountStatus, AttachmentKind } from "@prisma/client";
+import { Prisma, type AccountStatus, type AttachmentKind } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { createSession, destroySession, requirePermission, requireUser, can } from "@/lib/auth";
 import { run } from "@/lib/action";
 import { UserError } from "@/lib/errors";
 import { PERMISSIONS, type PermissionName } from "@/lib/permissions";
-import { brl, dateBR, ehPix, parseMoney, type AlteracaoConta } from "@/lib/format";
-import { MAX_ANEXOS, MAX_PDF_BYTES, MAX_PDF_MB, TIPOS_ANEXO, type TipoAnexo } from "@/lib/anexos";
-import { comPdfsNoS3, enviarAvatar, excluirPdfs, removerPdfs, type TipoAvatar } from "@/lib/storage";
+import { brl, dateBR, ehPix, lerParcelas, parseMoney, type AlteracaoConta, type ParcelaConta } from "@/lib/format";
+import { MAX_ANEXOS, MAX_PDF_BYTES, MAX_PDF_MB, podeAnexar, TIPOS_ANEXO, type TipoAnexo } from "@/lib/anexos";
+import { comPdfsNoS3, copiarPdf, enviarAvatar, excluirPdfs, removerPdfs, type TipoAvatar } from "@/lib/storage";
 import { documentoValido, soDigitos, telefoneValido, UFS, type TipoPessoa } from "@/lib/documentos";
 
 const ids = (fd: FormData) => fd.getAll("ids").map(String);
@@ -108,6 +108,8 @@ export async function alterarFoto(formData: FormData): Promise<Resultado> {
 
 /* ---------- 1. lançar ---------- */
 
+const MAX_PARCELAS = 60;
+
 const rowSchema = z.object({
   description: z.string().trim().min(2, "Informe a descrição."),
   supplier: z.string().trim().min(2, "Informe o fornecedor."),
@@ -117,6 +119,11 @@ const rowSchema = z.object({
   amount: z.string(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Informe o vencimento."),
   notes: z.string().trim().max(1000, "Observações: no máximo 1000 caracteres.").optional(),
+  /** Parcelamento: quando há 2 ou mais parcelas, cada uma vira uma conta separada ("Descrição (1/3)"). */
+  parcelas: z
+    .array(z.object({ amount: z.string(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Informe o vencimento de cada parcela.") }))
+    .max(MAX_PARCELAS, `No máximo ${MAX_PARCELAS} parcelas.`)
+    .optional(),
 });
 
 /** Chave Pix é obrigatória quando a forma de pagamento é Pix; nas outras formas é descartada. */
@@ -177,9 +184,9 @@ async function excluirDoS3(keys: (string | null)[]) {
 }
 
 /** Lê os PDFs enviados num campo do formulário, validando quantidade, tamanho e tipo. */
-async function lerPdfs(formData: FormData, field: string, kind: AttachmentKind, label: string) {
+async function lerPdfs(formData: FormData, field: string, kind: AttachmentKind, label: string, max = MAX_ANEXOS) {
   const files = formData.getAll(field).filter((f): f is File => f instanceof File && f.size > 0);
-  if (files.length > MAX_ANEXOS) throw new UserError(`${label}: no máximo ${MAX_ANEXOS} arquivos.`);
+  if (files.length > max) throw new UserError(`${label}: no máximo ${max} arquivo(s).`);
   return Promise.all(
     files.map(async (f) => {
       if (f.size > MAX_PDF_BYTES) throw new UserError(`${label}: "${f.name}" passa de ${MAX_PDF_MB} MB.`);
@@ -205,13 +212,24 @@ export async function lancarContas(formData: FormData) {
       const line = typeof issue.path[0] === "number" ? `Linha ${issue.path[0] + 1}: ` : "";
       throw new UserError(line + issue.message);
     }
-    const rows = await Promise.all(
-      parsed.data.map(async (r, i) => {
-        const amount = parseMoney(r.amount);
-        if (!(amount > 0)) throw new UserError(`Linha ${i + 1}: valor inválido.`);
-        return { ...r, amount, pixKey: chavePix(r.paymentMethod, r.pixKey, `Linha ${i + 1}: `) };
-      }),
-    );
+    const rows = parsed.data.map((r, i) => {
+      const amount = parseMoney(r.amount);
+      if (!(amount > 0)) throw new UserError(`Linha ${i + 1}: valor inválido.`);
+      const pixKey = chavePix(r.paymentMethod, r.pixKey, `Linha ${i + 1}: `);
+      // Sem parcelamento (ou com 1 parcela) a conta usa o valor e o vencimento da própria linha.
+      if (!r.parcelas || r.parcelas.length < 2) return { ...r, amount, pixKey, parcelas: null };
+      // Parcelada: vai para aprovação como uma conta só (valor total, vencimento da 1ª parcela);
+      // na aprovação é desmembrada em uma conta por parcela.
+      const parcelas: ParcelaConta[] = r.parcelas.map((p, k) => {
+        const valor = parseMoney(p.amount);
+        if (!(valor > 0)) throw new UserError(`Linha ${i + 1}: valor inválido na parcela ${k + 1}.`);
+        return { amount: valor, dueDate: p.dueDate };
+      });
+      const soma = parcelas.reduce((s, p) => s + Math.round(p.amount * 100), 0);
+      if (soma !== Math.round(amount * 100))
+        throw new UserError(`Linha ${i + 1}: a soma das parcelas (${brl(soma / 100)}) difere do valor da conta (${brl(amount)}).`);
+      return { ...r, amount, pixKey, dueDate: parcelas[0].dueDate, parcelas };
+    });
     const cadastros = await buscarCadastros(rows.map((r) => r.supplier), rows.map((r) => r.category), rows.map((r) => r.paymentMethod));
     const pdfs = (
       await Promise.all(
@@ -219,7 +237,8 @@ export async function lancarContas(formData: FormData) {
           [
             ...(await lerPdfs(formData, `pedido_${i}`, "PEDIDO", `Linha ${i + 1}, Pedido`)),
             ...(await lerPdfs(formData, `nota_${i}`, "NOTA_FISCAL", `Linha ${i + 1}, Nota fiscal`)),
-            ...(await lerPdfs(formData, `boleto_${i}`, "BOLETO", `Linha ${i + 1}, Boletos`)),
+            // No máximo um boleto por parcela.
+            ...(await lerPdfs(formData, `boleto_${i}`, "BOLETO", `Linha ${i + 1}, Boletos (um por parcela)`, rows[i].parcelas?.length ?? 1)),
           ].map((p) => ({ ...p, linha: i })),
         ),
       )
@@ -240,6 +259,7 @@ export async function lancarContas(formData: FormData) {
               amount: r.amount,
               dueDate: new Date(r.dueDate + "T00:00:00.000Z"),
               notes: r.notes || null,
+              parcelas: r.parcelas ?? undefined,
               createdById: user.id,
               attachments: { create: attachments },
             },
@@ -267,6 +287,55 @@ export async function cancelar(formData: FormData) {
   });
 }
 
+/**
+ * Exclui uma parcela/conta aprovada (ainda não paga): sai de Aprovadas e Pagamentos e vai para Canceladas,
+ * mantendo o histórico. O boleto é apagado do S3 (último passo da transação: se o S3 falhar, nada muda).
+ * Quem lança, quem aprova ou o administrador.
+ */
+export async function excluirAprovada(formData: FormData) {
+  await run("/contas?status=APROVADA", "/contas?status=APROVADA", async () => {
+    const user = await requireUser();
+    const acc = await prisma.account.findUnique({
+      where: { id: String(formData.get("id")) },
+      include: { attachments: { where: { kind: "BOLETO" }, select: { id: true, storageKey: true } } },
+    });
+    if (!acc) throw new UserError("Conta não encontrada.");
+    if (!can(user, "ADMIN") && !can(user, "LANCAR") && !can(user, "APROVAR")) throw new UserError("Você não tem permissão para excluir contas aprovadas.");
+    let ultima = false;
+    let notasApagadas = 0;
+    await prisma.$transaction(async (tx) => {
+      const res = await tx.account.updateMany({
+        where: { id: acc.id, status: "APROVADA" },
+        data: { status: "CANCELADA", canceledById: user.id, canceledAt: new Date(), cancelReason: "Excluída em Aprovadas." },
+      });
+      if (!res.count) throw new UserError(`Conta #${acc.code} não está mais aprovada (pode já ter sido paga) e não pode ser excluída.`);
+
+      // Se era a última parcela da conta (nenhuma outra aguardando, aprovada ou paga), a nota fiscal também é apagada:
+      // a original (1ª parcela) e as cópias que as parcelas receberam na aprovação.
+      const grupo = acc.parcelamentoId ?? acc.id;
+      const restantes = await tx.account.count({
+        where: { OR: [{ id: grupo }, { parcelamentoId: grupo }], id: { not: acc.id }, status: { not: "CANCELADA" } },
+      });
+      const notas = restantes
+        ? []
+        : await tx.attachment.findMany({
+            where: { kind: "NOTA_FISCAL", account: { OR: [{ id: grupo }, { parcelamentoId: grupo }] } },
+            select: { id: true, storageKey: true },
+          });
+      ultima = !restantes;
+      notasApagadas = notas.length;
+
+      const apagar = [...acc.attachments, ...notas];
+      await tx.attachment.deleteMany({ where: { id: { in: apagar.map((a) => a.id) } } });
+      // Por último: exclui no S3 e só então a transação confirma no banco.
+      await excluirDoS3(apagar.map((a) => a.storageKey));
+    }, { timeout: 30000 });
+    const apagados = [acc.attachments.length ? "boleto" : "", notasApagadas ? "nota fiscal" : ""].filter(Boolean);
+    return `Conta #${acc.code} excluída${apagados.length ? ` (${apagados.join(" e ")} apagado${apagados.length > 1 ? "s" : ""})` : ""}.` +
+      (ultima && acc.parcelamentoId ? " Era a última parcela da conta." : "");
+  });
+}
+
 /** Cancela uma conta pendente na tela de aprovações, exigindo motivo. */
 export async function cancelarAprovacao(formData: FormData) {
   await run("/contas?status=PENDENTE", "/contas?status=PENDENTE", async () => {
@@ -291,17 +360,31 @@ export async function cancelarAprovacao(formData: FormData) {
 async function lerAlteracoesAnexos(
   formData: FormData,
   existentes: { id: string; kind: TipoAnexo }[],
-  regras: { podeAlterar: (k: TipoAnexo) => boolean; podeRemover: boolean; negado: (k: TipoAnexo) => string },
+  regras: {
+    podeAlterar: (k: TipoAnexo) => boolean;
+    podeRemover: boolean;
+    negado: (k: TipoAnexo) => string;
+    /** Limite por tipo quando diferente de MAX_ANEXOS (ex.: boletos = quantidade de parcelas). */
+    limites?: Partial<Record<TipoAnexo, number>>;
+  },
 ) {
   const remover = formData.getAll("remover").map(String).filter((id) => existentes.some((a) => a.id === id));
   if (remover.length && !regras.podeRemover) throw new UserError(regras.negado(existentes.find((a) => a.id === remover[0])!.kind));
   const novos = [];
   for (const kind of Object.keys(TIPOS_ANEXO) as TipoAnexo[]) {
     const { label, campo } = TIPOS_ANEXO[kind];
+    const limite = regras.limites?.[kind] ?? MAX_ANEXOS;
     const files = await lerPdfs(formData, campo, kind, label);
     if (files.length && !regras.podeAlterar(kind)) throw new UserError(regras.negado(kind));
     const ficam = existentes.filter((a) => a.kind === kind && !remover.includes(a.id)).length;
-    if (ficam + files.length > MAX_ANEXOS) throw new UserError(`${label}: no máximo ${MAX_ANEXOS} arquivos por conta.`);
+    // Só barra quando há arquivos novos do tipo: contas antigas acima do limite continuam podendo receber outros anexos.
+    if (files.length && ficam + files.length > limite) {
+      throw new UserError(
+        kind === "BOLETO" && regras.limites?.BOLETO !== undefined
+          ? `${label}: no máximo um boleto por parcela (${limite}).`
+          : `${label}: no máximo ${limite} arquivo(s) por conta.`,
+      );
+    }
     novos.push(...files);
   }
   return { remover, novos };
@@ -312,7 +395,8 @@ async function lerAlteracoesAnexos(
  * Nas rejeitadas, cada alteração fica registrada (AccountEdit) para quem for aprovar ver o que mudou.
  */
 export async function editarConta(formData: FormData) {
-  const volta = formData.get("volta") === "REJEITADA" ? "/contas?status=REJEITADA" : "/contas?status=PENDENTE";
+  const v = formData.get("volta");
+  const volta = v === "REJEITADA" ? "/contas?status=REJEITADA" : v === "APROVADA" ? "/contas?status=APROVADA" : "/contas?status=PENDENTE";
   await run(volta, volta, async () => {
     const user = await requireUser();
     const acc = await prisma.account.findUnique({
@@ -320,10 +404,15 @@ export async function editarConta(formData: FormData) {
       include: { supplier: true, category: true, paymentMethod: true, attachments: { select: { id: true, kind: true, fileName: true, storageKey: true } } },
     });
     if (!acc) throw new UserError("Conta não encontrada.");
-    if (acc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem lançou (ou o administrador) pode editar a conta.");
-    const naoEditavel = `Conta #${acc.code} não está mais aguardando aprovação nem rejeitada e não pode ser editada.`;
-    if (acc.status !== "PENDENTE" && acc.status !== "REJEITADA") throw new UserError(naoEditavel);
+    // Aprovada: quem lança, quem aprova ou o administrador. Aguardando/rejeitada: só quem lançou ou o administrador.
+    if (acc.status === "APROVADA") {
+      if (!can(user, "ADMIN") && !can(user, "LANCAR") && !can(user, "APROVAR")) throw new UserError("Você não tem permissão para editar contas aprovadas.");
+    } else if (acc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem lançou (ou o administrador) pode editar a conta.");
+    const naoEditavel = `Conta #${acc.code} já foi paga ou cancelada e não pode ser editada.`;
+    if (acc.status !== "PENDENTE" && acc.status !== "REJEITADA" && acc.status !== "APROVADA") throw new UserError(naoEditavel);
     const status = acc.status;
+    // Aprovada (parcela ou conta): edita só os dados; parcelamento e anexos não mudam por aqui.
+    const aprovada = status === "APROVADA";
 
     const parsed = rowSchema.safeParse({
       description: formData.get("description") ?? "",
@@ -334,11 +423,34 @@ export async function editarConta(formData: FormData) {
       amount: formData.get("amount") ?? "",
       dueDate: formData.get("dueDate") ?? "",
       notes: formData.get("notes") ?? "",
+      parcelas: (() => {
+        const v = formData.get("parcelas");
+        try {
+          return v ? JSON.parse(String(v)) : undefined;
+        } catch {
+          throw new UserError("Parcelas inválidas.");
+        }
+      })(),
     });
     if (!parsed.success) throw new UserError(parsed.error.issues[0].message);
     const r = parsed.data;
     const amount = parseMoney(r.amount);
     if (!(amount > 0)) throw new UserError("Informe um valor válido.");
+    // Parcelas editadas no modal (com 2 ou mais a conta fica parcelada; com 1 deixa de ser).
+    const parcelas: ParcelaConta[] =
+      !aprovada && r.parcelas && r.parcelas.length >= 2
+        ? r.parcelas.map((p, k) => {
+            const valor = parseMoney(p.amount);
+            if (!(valor > 0)) throw new UserError(`Valor inválido na parcela ${k + 1}.`);
+            return { amount: valor, dueDate: p.dueDate };
+          })
+        : [];
+    if (parcelas.length) {
+      const soma = parcelas.reduce((s, p) => s + Math.round(p.amount * 100), 0);
+      if (soma !== Math.round(amount * 100))
+        throw new UserError(`A soma das parcelas (${brl(soma / 100)}) difere do valor da conta (${brl(amount)}).`);
+      r.dueDate = parcelas[0].dueDate;
+    }
     // O que não mudou fica como está (mesmo que o cadastro tenha sido inativado depois); o que mudou precisa estar cadastrado e ativo.
     const mudouForn = r.supplier !== acc.supplier.name;
     const mudouCat = !acc.category || r.category !== acc.category.name;
@@ -349,14 +461,24 @@ export async function editarConta(formData: FormData) {
     const forma = mudouForma || !acc.paymentMethod ? cadastros.formas.get(r.paymentMethod)! : { id: acc.paymentMethod.id, name: acc.paymentMethod.name };
     const pixKey = chavePix(forma.name, r.pixKey);
 
-    const { remover, novos } = await lerAlteracoesAnexos(formData, acc.attachments, {
-      podeAlterar: (k) => k !== "NOTA_FISCAL",
-      podeRemover: true,
-      negado: () => "A nota fiscal só pode ser anexada depois que a conta for aprovada.",
-    });
+    const { remover, novos } = aprovada
+      ? { remover: [] as string[], novos: [] as Awaited<ReturnType<typeof lerPdfs>> }
+      : await lerAlteracoesAnexos(formData, acc.attachments, {
+          podeAlterar: (k) => k !== "NOTA_FISCAL",
+          podeRemover: true,
+          negado: () => "A nota fiscal só pode ser anexada depois que a conta for aprovada.",
+          limites: { BOLETO: Math.max(1, parcelas.length) },
+        });
+    // Antes da aprovação o limite vale sempre (inclusive ao diminuir as parcelas): um boleto por parcela.
+    const qtdBoletos =
+      acc.attachments.filter((a) => a.kind === "BOLETO" && !remover.includes(a.id)).length + novos.filter((a) => a.kind === "BOLETO").length;
+    if (!aprovada && qtdBoletos > Math.max(1, parcelas.length))
+      throw new UserError(`São ${qtdBoletos} boletos para ${Math.max(1, parcelas.length)} parcela(s): no máximo um boleto por parcela.`);
 
     // O que mudou, no formato exibido no histórico.
     const dueDate = new Date(r.dueDate + "T00:00:00.000Z");
+    const parcelasAntes = lerParcelas(acc.parcelas);
+    const textoParcelas = (l: ParcelaConta[]) => l.map((p, k) => `${k + 1}/${l.length} ${brl(p.amount)} em ${dateBR(new Date(p.dueDate + "T00:00:00.000Z"))}`).join("; ");
     const mudancas: AlteracaoConta[] = [];
     const comparar = (campo: string, de: string, para: string) => de !== para && mudancas.push({ campo, de, para });
     comparar("Descrição", acc.description, r.description);
@@ -366,6 +488,7 @@ export async function editarConta(formData: FormData) {
     comparar("Chave Pix", acc.pixKey ?? "", pixKey ?? "");
     comparar("Valor", brl(acc.amount), brl(amount));
     comparar("Vencimento", dateBR(acc.dueDate), dateBR(dueDate));
+    comparar("Parcelas", textoParcelas(parcelasAntes), textoParcelas(parcelas));
     comparar("Observações", acc.notes ?? "", r.notes ?? "");
     for (const a of acc.attachments.filter((a) => remover.includes(a.id)))
       mudancas.push({ campo: `${TIPOS_ANEXO[a.kind].label} (removido)`, de: a.fileName, para: "" });
@@ -384,16 +507,19 @@ export async function editarConta(formData: FormData) {
           amount,
           dueDate,
           notes: r.notes || null,
+          parcelas: parcelas.length ? parcelas : Prisma.DbNull,
+          // Rejeitada: ao salvar a correção, a conta volta automaticamente para aprovação.
+          ...(status === "REJEITADA" ? { status: "PENDENTE" as const, reviewedById: null, reviewedAt: null, rejectionReason: null } : {}),
         },
       });
       if (!res.count) throw new UserError(naoEditavel);
       await tx.attachment.deleteMany({ where: { id: { in: remover }, accountId: acc.id } });
       if (enviados.length) await tx.attachment.createMany({ data: enviados.map((a) => ({ ...a, accountId: acc.id })) });
-      if (status === "REJEITADA") await tx.accountEdit.create({ data: { accountId: acc.id, userId: user.id, changes: mudancas } });
+      if (status === "REJEITADA" || aprovada) await tx.accountEdit.create({ data: { accountId: acc.id, userId: user.id, changes: mudancas } });
       // Por último: exclui no S3 e só então a transação confirma a exclusão no banco.
       await excluirDoS3(acc.attachments.filter((a) => remover.includes(a.id)).map((a) => a.storageKey));
     }, { timeout: 30000 }));
-    return `Conta #${acc.code} atualizada.`;
+    return status === "REJEITADA" ? `Conta #${acc.code} corrigida e reenviada para aprovação.` : `Conta #${acc.code} atualizada.`;
   });
 }
 
@@ -419,10 +545,19 @@ export async function gerenciarAnexos(formData: FormData) {
     if (acc.status !== "APROVADA" && acc.status !== "PAGA")
       throw new UserError(`Conta #${acc.code} não está aprovada; os anexos não podem ser alterados.`);
 
+    // Nota fiscal só na conta sem parcelamento ou na 1ª parcela (a conta original).
+    const regra = { status: acc.status, admin, primeiraParcela: !acc.parcelamentoId || acc.parcelamentoId === acc.id };
     const { remover, novos } = await lerAlteracoesAnexos(formData, acc.attachments, {
-      podeAlterar: (k) => admin || k !== "PEDIDO",
+      podeAlterar: (k) => podeAnexar(k, regra),
       podeRemover: admin,
-      negado: (k) => (k === "PEDIDO" ? "Só o administrador pode alterar o pedido." : "Só o administrador pode remover anexos."),
+      negado: (k) =>
+        k === "PEDIDO"
+          ? "O pedido não pode mais ser anexado depois da aprovação."
+          : k === "NOTA_FISCAL"
+            ? "A nota fiscal só pode ser anexada na 1ª parcela."
+            : "Só o administrador pode remover anexos.",
+      // Depois de aprovada, cada conta é uma parcela: um boleto só.
+      limites: { BOLETO: 1 },
     });
     if (!novos.length && !remover.length) throw new UserError("Nenhuma alteração nos anexos.");
 
@@ -443,21 +578,85 @@ export async function gerenciarAnexos(formData: FormData) {
 export async function aprovar(formData: FormData) {
   await run("/contas?status=PENDENTE", "/contas?status=PENDENTE", async () => {
     const user = await requirePermission("APROVAR");
-    const accounts = await prisma.account.findMany({ where: { id: { in: ids(formData) }, status: "PENDENTE" } });
+    const accounts = await prisma.account.findMany({
+      where: { id: { in: ids(formData) }, status: "PENDENTE" },
+      include: {
+        attachments: { select: { id: true, kind: true, fileName: true, size: true, storageKey: true, data: true }, orderBy: { createdAt: "asc" } },
+      },
+    });
     if (!accounts.length) throw new UserError("Selecione ao menos uma conta pendente.");
     if (!can(user, "ADMIN") && accounts.some((a) => a.createdById === user.id)) {
       throw new UserError("Você não pode aprovar contas que você mesmo lançou.");
     }
-    const res = await prisma.account.updateMany({
-      where: {
-        id: { in: accounts.map((a) => a.id) },
-        status: "PENDENTE",
-        ...(can(user, "ADMIN") ? {} : { createdById: { not: user.id } }),
-      },
-      data: { status: "APROVADA", reviewedById: user.id, reviewedAt: new Date(), rejectionReason: null },
-    });
-    if (!res.count) throw new UserError("Nenhuma conta pôde ser aprovada.");
-    return `${res.count} conta(s) aprovada(s).`;
+
+    // Contas parceladas são desmembradas: a própria conta vira a 1ª parcela e as demais viram contas novas, já aprovadas.
+    // Boletos: o 1º fica na parcela 1/N, o 2º vai para a 2/N e assim por diante (o arquivo é movido, não copiado).
+    // Pedido e nota fiscal: cada parcela recebe sua cópia (excluir o anexo de uma parcela não afeta as outras).
+    const copias: string[] = [];
+    try {
+      type Anexo = { kind: AttachmentKind; fileName: string; size: number; storageKey: string | null; data: Buffer | null };
+      const desmembrar: { a: (typeof accounts)[number]; parcelas: ParcelaConta[]; anexosPorParcela: Anexo[][]; boletos: string[] }[] = [];
+      for (const a of accounts) {
+        const parcelas = lerParcelas(a.parcelas);
+        if (parcelas.length < 2) continue;
+        const boletos = a.attachments.filter((x) => x.kind === "BOLETO").map((x) => x.id);
+        const anexosPorParcela: Anexo[][] = [];
+        for (let k = 1; k < parcelas.length; k++) {
+          const anexos: Anexo[] = [];
+          for (const x of a.attachments.filter((x) => x.kind !== "BOLETO")) {
+            const storageKey = x.storageKey ? await copiarPdf(x.storageKey) : null;
+            if (storageKey) copias.push(storageKey);
+            anexos.push({ kind: x.kind, fileName: x.fileName, size: x.size, storageKey, data: storageKey ? null : x.data });
+          }
+          anexosPorParcela.push(anexos);
+        }
+        desmembrar.push({ a, parcelas, anexosPorParcela, boletos });
+      }
+
+      const criadas = await prisma.$transaction(async (tx) => {
+        const revisao = { status: "APROVADA" as const, reviewedById: user.id, reviewedAt: new Date(), rejectionReason: null };
+        const res = await tx.account.updateMany({ where: { id: { in: accounts.map((a) => a.id) }, status: "PENDENTE" }, data: revisao });
+        if (res.count !== accounts.length) throw new UserError("Algumas contas foram alteradas por outra pessoa. Tente novamente.");
+        let criadas = 0;
+        for (const { a, parcelas, anexosPorParcela, boletos } of desmembrar) {
+          const n = parcelas.length;
+          const data = (k: number) => ({
+            description: `${a.description} (${k + 1}/${n})`,
+            amount: parcelas[k].amount,
+            dueDate: new Date(parcelas[k].dueDate + "T00:00:00.000Z"),
+          });
+          await tx.account.update({ where: { id: a.id }, data: { ...data(0), parcelas: Prisma.DbNull, parcelamentoId: a.id } });
+          for (let k = 1; k < n; k++) {
+            await tx.account.create({
+              data: {
+                ...data(k),
+                ...revisao,
+                supplierId: a.supplierId,
+                categoryId: a.categoryId,
+                paymentMethodId: a.paymentMethodId,
+                pixKey: a.pixKey,
+                notes: a.notes,
+                createdById: a.createdById,
+                createdAt: a.createdAt,
+                parcelamentoId: a.id,
+                attachments: {
+                  create: anexosPorParcela[k - 1],
+                  ...(boletos[k] ? { connect: { id: boletos[k] } } : {}),
+                },
+              },
+            });
+            criadas++;
+          }
+        }
+        return criadas;
+      }, { timeout: 30000 });
+
+      return `${accounts.length} conta(s) aprovada(s).` +
+        (desmembrar.length ? ` ${desmembrar.length} parcelada(s), desmembrada(s) em ${desmembrar.length + criadas} conta(s) a pagar.` : "");
+    } catch (e) {
+      await removerPdfs(copias);
+      throw e;
+    }
   });
 }
 
@@ -483,23 +682,6 @@ export async function rejeitar(formData: FormData) {
     });
     if (!count) throw new UserError("Selecione ao menos uma conta.");
     return `${count} conta(s) rejeitada(s).`;
-  });
-}
-
-export async function reenviar(formData: FormData) {
-  const user = await requireUser();
-  // Continua na lista de rejeitadas (de onde o botão é usado), sem levar para Aprovações.
-  await run("/contas?status=REJEITADA", "/contas?status=REJEITADA", async () => {
-    const acc = await prisma.account.findUnique({ where: { id: String(formData.get("id")) } });
-    if (!acc) throw new UserError("Conta não encontrada.");
-    if (acc.createdById !== user.id && !can(user, "ADMIN"))
-      throw new UserError("Só quem lançou (ou o administrador) pode reenviar para aprovação.");
-    const res = await prisma.account.updateMany({
-      where: { id: acc.id, status: "REJEITADA" },
-      data: { status: "PENDENTE", reviewedById: null, reviewedAt: null, rejectionReason: null },
-    });
-    if (!res.count) throw new UserError("Só contas rejeitadas podem ser reenviadas.");
-    return `Conta #${acc.code} reenviada para aprovação.`;
   });
 }
 

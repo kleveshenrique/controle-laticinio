@@ -114,6 +114,11 @@ model Account {
   amount     Decimal       @db.Decimal(14, 2)
   dueDate     DateTime      @db.Date
   notes       String?
+  /// Conta parcelada aguardando aprovação: lista de { amount, dueDate: "YYYY-MM-DD" }.
+  /// Na aprovação a conta é desmembrada em uma conta por parcela e este campo volta a ser nulo.
+  parcelas    Json?
+  /// Contas desmembradas de uma mesma conta parcelada compartilham este id (o id da 1ª parcela).
+  parcelamentoId String?
   status      AccountStatus @default(PENDENTE)
 
   createdById String
@@ -147,6 +152,7 @@ model Account {
   extraNotes   AccountNote[]
 
   @@index([status, dueDate])
+  @@index([parcelamentoId])
 }
 
 /// Arquivos PDF anexados à conta (pedido e boletos), guardados no próprio banco.

@@ -16,7 +16,13 @@ export function AnexosEditor({
   onRemover,
   podeAlterar,
   podeRemover,
+  limites = {},
+  motivoBloqueio = () => "somente o administrador pode alterar",
 }: {
+  /** Texto exibido quando o tipo não pode ser alterado (padrão: "somente o administrador pode alterar"). */
+  motivoBloqueio?: (kind: TipoAnexo) => string;
+  /** Limite de arquivos por tipo, quando diferente de MAX_ANEXOS (ex.: boletos = quantidade de parcelas). */
+  limites?: Partial<Record<TipoAnexo, number>>;
   tipos: TipoAnexo[];
   anexos: AnexoExistente[];
   novos: NovosAnexos;
@@ -32,6 +38,7 @@ export function AnexosEditor({
         const { label, botao } = TIPOS_ANEXO[kind];
         const existentes = anexos.filter((a) => a.kind === kind);
         const ficam = existentes.filter((a) => !remover.includes(a.id)).length;
+        const limite = limites[kind] ?? MAX_ANEXOS;
         return (
           <section key={kind} className="space-y-1 border-t border-line pt-3">
             {existentes.length > 0 && (
@@ -69,11 +76,12 @@ export function AnexosEditor({
                 buttonLabel={botao}
                 files={novos[kind] ?? []}
                 onChange={(f) => onNovos({ ...novos, [kind]: f })}
-                max={MAX_ANEXOS - ficam}
+                max={Math.max(0, limite - ficam)}
+                limite={limite}
               />
             ) : (
               <p className="text-xs font-medium text-muted">
-                {label} <span className="font-normal">({existentes.length}/{MAX_ANEXOS} PDF) · somente o administrador pode alterar</span>
+                {label} <span className="font-normal">({existentes.length}/{limite} PDF) · {motivoBloqueio(kind)}</span>
               </p>
             )}
           </section>

@@ -10,7 +10,7 @@ const PdfIcon = () => (
 );
 
 /** PDFs (pedido, nota fiscal e boletos) de uma conta, como botões que abrem o arquivo em nova aba. */
-export function Anexos({ anexos }: { anexos: Anexo[] }) {
+export function Anexos({ anexos, className = "mt-1.5" }: { anexos: Anexo[]; className?: string }) {
   if (!anexos.length) return null;
   const grupos: [string, Anexo[]][] = [
     ["Pedido", anexos.filter((a) => a.kind === "PEDIDO")],
@@ -18,7 +18,7 @@ export function Anexos({ anexos }: { anexos: Anexo[] }) {
     ["Boleto", anexos.filter((a) => a.kind === "BOLETO")],
   ];
   return (
-    <div className="mt-1.5 flex flex-wrap gap-1.5">
+    <div className={`${className} flex flex-wrap gap-1.5`}>
       {grupos.flatMap(([label, lista]) =>
         lista.map((a, i) => (
           <a

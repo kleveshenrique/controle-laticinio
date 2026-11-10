@@ -58,7 +58,7 @@ export default async function Painel() {
                 {proximas.map((a) => (
                   <tr key={a.id}>
                     <td className="td">{dateBR(a.dueDate)}</td>
-                    <td className="td"><Observacoes className="" conta={<><div className="text-sm font-medium">{a.supplier.name}</div><div className="text-muted">{a.description}</div></>} notes={a.notes} /></td>
+                    <td className="td"><Observacoes className="" recolher conta={<><div className="text-sm font-medium">{a.supplier.name}</div><div className="text-muted">{a.description}</div></>} notes={a.notes} /></td>
                     <td className="td"><StatusBadge status={a.status} /></td>
                     <td className="td text-right font-medium">{brl(a.amount)}</td>
                   </tr>

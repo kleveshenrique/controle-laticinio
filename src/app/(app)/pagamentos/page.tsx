@@ -1,4 +1,6 @@
 import { Observacoes } from "@/components/Observacoes";
+import { SeloParcelamento } from "@/components/SeloParcelamento";
+import { codigosParcelamento, comNotasDaPrimeiraParcela } from "@/lib/parcelamento";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
@@ -27,6 +29,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
       include: { supplier: true, paidBy: true, cashRegister: true },
     }),
   ]);
+  const [parcelamentos, anexosExibidos] = await Promise.all([codigosParcelamento(contas), comNotasDaPrimeiraParcela(contas)]);
   const caixasModal = caixas.map((c) => ({ id: c.id, name: c.name, balance: Number(c.balance) }));
   return (
     <div className="space-y-8">
@@ -50,13 +53,12 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
                     <tr key={a.id} className={own ? "opacity-60" : ""}>
                       <td className="td text-muted">{a.code}</td>
                       <td className={`td ${atrasada ? "font-medium text-red-700" : ""}`}>{dateBR(a.dueDate)}{atrasada && <div className="text-xs">vencida</div>}</td>
-                      <td className="td"><Observacoes className="" conta={<><div className="text-sm font-medium">{a.supplier.name}</div><div className="text-muted">{a.description}{a.paymentMethod ? ` · ${formaPagamentoTexto(a.paymentMethod.name, a.pixKey)}` : ""}</div></>} notes={a.notes} autor={{ name: a.createdBy.name, createdAt: a.createdAt }} extras={a.extraNotes} rejeicoes={a.rejections} edicoes={a.edits} /><Anexos anexos={a.attachments} /></td>
+                      <td className="td"><Observacoes className="" recolher conta={<><div className="text-sm font-medium">{a.supplier.name}<SeloParcelamento codigo={a.parcelamentoId ? parcelamentos.get(a.parcelamentoId) : undefined} descricao={a.description} /></div><div className="text-muted">{a.description}{a.paymentMethod ? ` · ${formaPagamentoTexto(a.paymentMethod.name, a.pixKey)}` : ""}</div></>} notes={a.notes} autor={{ name: a.createdBy.name, createdAt: a.createdAt }} extras={a.extraNotes} rejeicoes={a.rejections} edicoes={a.edits} aoLadoObs={<><Anexos className="" anexos={anexosExibidos(a, a.attachments)} /><div className="ml-auto"><GerenciarAnexos id={a.id} code={a.code} status="APROVADA" anexos={a.attachments} admin={can(user, "ADMIN")} volta="PAGAMENTOS" primeiraParcela={!a.parcelamentoId || a.parcelamentoId === a.id} /></div></>} /></td>
                       <td className="td text-xs text-muted">{a.reviewedBy?.name}{own && <div>(você — outra pessoa paga)</div>}</td>
                       <td className="td text-right font-medium">{brl(a.amount)}</td>
                       <td className="td">
                         <div className="flex items-center justify-end gap-2">
                           <AdicionarObservacao id={a.id} code={a.code} />
-                          <GerenciarAnexos id={a.id} code={a.code} status="APROVADA" anexos={a.attachments} admin={can(user, "ADMIN")} volta="PAGAMENTOS" />
                           <PagarConta id={a.id} code={a.code} amount={Number(a.amount)} caixas={caixasModal} disabled={own} />
                         </div>
                       </td>
@@ -74,7 +76,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
         <div className="card divide-y divide-line">
           {recentes.map((a) => (
             <div key={a.id} className="flex flex-wrap justify-between gap-2 px-4 py-2 text-sm">
-              <span>#{a.code} · {a.supplier.name} <span className="text-xs text-muted">— {a.paidBy?.name}, {dateTimeBR(a.paidAt)}, {a.cashRegister?.name}</span><Observacoes notes={a.notes} /></span>
+              <span>#{a.code} · {a.supplier.name} <span className="text-xs text-muted">— {a.paidBy?.name}, {dateTimeBR(a.paidAt)}, {a.cashRegister?.name}</span><Observacoes recolher notes={a.notes} /></span>
               <strong>{brl(a.amount)}</strong>
             </div>
           ))}
