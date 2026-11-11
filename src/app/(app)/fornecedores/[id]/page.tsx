@@ -1,11 +1,12 @@
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { can, requireUser } from "@/lib/auth";
+import { can, exigirTela, requireUser } from "@/lib/auth";
 import { FornecedorForm } from "@/components/FornecedorForm";
 
 export default async function EditarFornecedor({ params, searchParams }: { params: { id: string }; searchParams: { erro?: string } }) {
   const user = await requireUser();
   if (!can(user, "LANCAR")) redirect("/contas?erro=" + encodeURIComponent("Você não tem permissão para gerenciar fornecedores."));
+  exigirTela(user, "FORNECEDORES");
   const s = await prisma.supplier.findUnique({ where: { id: params.id } });
   if (!s) notFound();
   return (

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { can, requireUser } from "@/lib/auth";
+import { can, exigirTela, requireUser } from "@/lib/auth";
 import { SubmitButton } from "@/components/SubmitButton";
 import { salvarFormaPagamento } from "@/app/actions";
 import { ListaFiltrada, type ItemLista } from "@/components/ListaFiltrada";
@@ -12,6 +12,7 @@ type SP = { situacao?: string; erro?: string; ok?: string };
 export default async function FormasPagamento({ searchParams: sp }: { searchParams: SP }) {
   const user = await requireUser();
   if (!can(user, "LANCAR")) redirect("/contas?erro=" + encodeURIComponent("Você não tem permissão para gerenciar formas de pagamento."));
+  exigirTela(user, "FORMAS_PAGAMENTO");
 
   // Sem filtro, mostra só as ativas. "todas" e "inativas" mudam isso.
   const situacao = sp.situacao === "todas" || sp.situacao === "inativas" ? sp.situacao : "ativas";

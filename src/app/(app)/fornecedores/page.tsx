@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { can, requireUser } from "@/lib/auth";
+import { can, exigirTela, requireUser } from "@/lib/auth";
 import { maskCep, maskDocumento, maskTelefone } from "@/lib/documentos";
 import { ListaFiltrada, type ItemLista } from "@/components/ListaFiltrada";
 import { IconeEditar } from "@/components/Icones";
@@ -12,6 +12,7 @@ type SP = { situacao?: string; erro?: string; ok?: string };
 export default async function Fornecedores({ searchParams: sp }: { searchParams: SP }) {
   const user = await requireUser();
   if (!can(user, "LANCAR")) redirect("/contas?erro=" + encodeURIComponent("Você não tem permissão para gerenciar fornecedores."));
+  exigirTela(user, "FORNECEDORES");
 
   // Sem filtro, mostra só os ativos. "todos" e "inativos" mudam isso.
   const situacao = sp.situacao === "todos" || sp.situacao === "inativos" ? sp.situacao : "ativos";

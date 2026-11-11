@@ -3,7 +3,9 @@ import { SeloParcelamento } from "@/components/SeloParcelamento";
 import { codigosParcelamento, comNotasDaPrimeiraParcela, parcelasAtivas } from "@/lib/parcelamento";
 import type { AccountStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { can, requireUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { can, exigirTela, requireUser } from "@/lib/auth";
+import { ABAS_CONTAS, podeVerAba } from "@/lib/telas";
 import { brl, dateBR, formaPagamentoTexto, lerParcelas, STATUS, todayISO, VENCIDAS_CLS } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Anexos } from "@/components/Anexos";
@@ -19,6 +21,21 @@ type SP = { status?: string; q?: string; de?: string; ate?: string; vencidas?: s
 
 export default async function Contas({ searchParams: sp }: { searchParams: SP }) {
   const user = await requireUser();
+  exigirTela(user, "CONTAS");
+  // Abas liberadas para o usuário (tela Usuários). Pedir uma aba sem acesso cai na primeira liberada.
+  const abas = ABAS_CONTAS.filter((a) => podeVerAba(user, a.aba));
+  if (abas.length === 0) {
+    return <div className="card p-6 text-center text-sm text-muted">Nenhuma aba da tela Contas foi liberada para o seu usuário.</div>;
+  }
+  const pedida = sp.vencidas ? "VENCIDAS" : sp.status ?? "PENDENTE";
+  if (!abas.some((a) => a.aba === pedida)) {
+    // Sem filtro na URL (padrão "Aprovar") não é erro: só abre na primeira aba liberada.
+    const primeira = abas[0].aba;
+    const destino = primeira === "VENCIDAS" ? "/contas?vencidas=1" : `/contas?status=${primeira}`;
+    const pediuExplicitamente = Boolean(sp.vencidas || sp.status);
+    const erro = sp.erro ?? (pediuExplicitamente ? "Você não tem acesso a essa aba de Contas." : undefined);
+    redirect(destino + (erro ? `&erro=${encodeURIComponent(erro)}` : ""));
+  }
   const where: Prisma.AccountWhereInput = {};
   // Sem filtro na URL, abre em "Aprovar" (pendentes). "Todas" usa status=TODAS.
   const status = sp.status ?? (sp.vencidas ? "" : "PENDENTE");
@@ -85,7 +102,8 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
       ])
     : [[], [], []];
 
-  const tabs: [string, string, string?][] = [["TODAS", "Todas"], ...Object.entries(STATUS).map(([k, v]) => [k, "tab" in v ? v.tab : v.label, v.cls] as [string, string, string])];
+  const liberada = (aba: string) => abas.some((a) => a.aba === aba);
+  const tabs: [string, string, string?][] = [["TODAS", "Todas"] as [string, string], ...Object.entries(STATUS).map(([k, v]) => [k, "tab" in v ? v.tab : v.label, v.cls] as [string, string, string])].filter(([k]) => liberada(k));
 
   return (
     <div>
@@ -96,16 +114,31 @@ export default async function Contas({ searchParams: sp }: { searchParams: SP })
             {label}
           </AbaAcao>
         ))}
-        <AbaAcao href="/contas?vencidas=1" ativa={Boolean(sp.vencidas)} cor={VENCIDAS_CLS}>Vencidas</AbaAcao>
+        {liberada("VENCIDAS") && <AbaAcao href="/contas?vencidas=1" ativa={Boolean(sp.vencidas)} cor={VENCIDAS_CLS}>Vencidas</AbaAcao>}
       </div>
 
-      <form className="card mb-4 grid gap-3 p-3 sm:grid-cols-[2fr_1fr_1fr_auto]">
-        {status && <input type="hidden" name="status" value={status} />}
-        <input name="q" defaultValue={sp.q} placeholder="Buscar fornecedor ou descrição" className="input" />
-        <input name="de" type="date" defaultValue={sp.de} className="input" title="Vencimento de" />
-        <input name="ate" type="date" defaultValue={sp.ate} className="input" title="Vencimento até" />
-        <button className="btn">Filtrar</button>
-      </form>
+      {(() => {
+        const form = (
+          <form className="card mb-4 grid gap-3 p-3 sm:grid-cols-[2fr_1fr_1fr_auto]">
+            {status && <input type="hidden" name="status" value={status} />}
+            <input name="q" defaultValue={sp.q} placeholder="Buscar fornecedor ou descrição" className="input" />
+            <input name="de" type="date" defaultValue={sp.de} className="input" title="Vencimento de" />
+            <input name="ate" type="date" defaultValue={sp.ate} className="input" title="Vencimento até" />
+            <button className="btn">Filtrar</button>
+          </form>
+        );
+        // Aba "Aprovar": o filtro fica recolhido no botão "Filtros" (aberto se já houver filtro aplicado).
+        if (sp.vencidas || status !== "PENDENTE") return form;
+        const filtrando = Boolean(sp.q || sp.de || sp.ate);
+        return (
+          <details className="mb-1" open={filtrando}>
+            <summary className="btn mb-3 inline-flex cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+              Filtros{filtrando ? " •" : ""}
+            </summary>
+            {form}
+          </details>
+        );
+      })()}
 
       <div className="card overflow-x-auto">
         <table className="w-full min-w-[860px]">

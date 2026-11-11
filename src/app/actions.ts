@@ -11,6 +11,7 @@ import { createSession, destroySession, requirePermission, requireUser, can } fr
 import { run } from "@/lib/action";
 import { UserError } from "@/lib/errors";
 import { PERMISSIONS, type PermissionName } from "@/lib/permissions";
+import { TODAS_TELAS } from "@/lib/telas";
 import { brl, dateBR, ehPix, lerParcelas, parseMoney, type AlteracaoConta, type ParcelaConta } from "@/lib/format";
 import { MAX_ANEXOS, MAX_PDF_BYTES, MAX_PDF_MB, podeAnexar, TIPOS_ANEXO, type TipoAnexo } from "@/lib/anexos";
 import { comPdfsNoS3, copiarPdf, enviarAvatar, excluirPdfs, removerPdfs, type TipoAvatar } from "@/lib/storage";
@@ -19,6 +20,8 @@ import { documentoValido, soDigitos, telefoneValido, UFS, type TipoPessoa } from
 const ids = (fd: FormData) => fd.getAll("ids").map(String);
 const perms = (fd: FormData) =>
   fd.getAll("permissions").map(String).filter((p): p is PermissionName => (PERMISSIONS as readonly string[]).includes(p));
+/** Telas e abas marcadas no formulário de usuário (só chaves conhecidas). */
+const telas = (fd: FormData) => fd.getAll("telas").map(String).filter((t) => TODAS_TELAS.includes(t));
 
 /* ---------- sessão ---------- */
 
@@ -790,7 +793,7 @@ export async function criarUsuario(formData: FormData) {
     if (password.length < 6) throw new UserError("A senha precisa ter ao menos 6 caracteres.");
     if (await prisma.user.findUnique({ where: { email } })) throw new UserError("Já existe um usuário com esse e-mail.");
     await prisma.user.create({
-      data: { name, email, passwordHash: await bcrypt.hash(password, 10), permissions: perms(formData) },
+      data: { name, email, passwordHash: await bcrypt.hash(password, 10), permissions: perms(formData), telas: telas(formData) },
     });
     return `Usuário ${name} criado.`;
   });
@@ -810,7 +813,7 @@ export async function atualizarUsuario(formData: FormData) {
     if (password && password.length < 6) throw new UserError("A nova senha precisa ter ao menos 6 caracteres.");
     const u = await prisma.user.update({
       where: { id },
-      data: { permissions, active, ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}) },
+      data: { permissions, telas: telas(formData), active, ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}) },
       select: { name: true },
     });
     return `Usuário ${u.name} atualizado com sucesso${password ? " (senha alterada)" : ""}.`;

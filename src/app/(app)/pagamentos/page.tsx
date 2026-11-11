@@ -3,7 +3,7 @@ import { SeloParcelamento } from "@/components/SeloParcelamento";
 import { codigosParcelamento, comNotasDaPrimeiraParcela } from "@/lib/parcelamento";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { can, requireUser } from "@/lib/auth";
+import { can, exigirTela, requireUser } from "@/lib/auth";
 import { brl, dateBR, dateTimeBR, formaPagamentoTexto, todayISO } from "@/lib/format";
 import { Anexos } from "@/components/Anexos";
 import { PagarConta } from "@/components/PagarConta";
@@ -13,6 +13,7 @@ import { AdicionarObservacao } from "@/components/AdicionarObservacao";
 export default async function Pagamentos({ searchParams }: { searchParams: { erro?: string; ok?: string } }) {
   const user = await requireUser();
   if (!can(user, "PAGAR")) redirect("/contas?erro=" + encodeURIComponent("Você não tem permissão para pagar."));
+  exigirTela(user, "PAGAMENTOS");
 
   const hoje = todayISO();
   const [contas, caixas, recentes] = await Promise.all([

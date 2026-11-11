@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { can, requireUser } from "@/lib/auth";
 import { PERMISSIONS, PERMISSION_LABEL } from "@/lib/permissions";
+import { ABAS_CONTAS, abaKey, TELAS, TODAS_TELAS } from "@/lib/telas";
 import { SubmitButton } from "@/components/SubmitButton";
 import { atualizarUsuario, criarUsuario } from "@/app/actions";
 
@@ -14,6 +15,29 @@ function PermissionChecks({ selected = [] as string[] }) {
           {PERMISSION_LABEL[p]}
         </label>
       ))}
+    </div>
+  );
+}
+
+/** Botões do menu do topo e abas da tela Contas que o usuário pode ver. */
+function TelaChecks({ selected = TODAS_TELAS }: { selected?: string[] }) {
+  const check = (key: string, label: string) => (
+    <label key={key} className="flex items-center gap-1.5 text-sm">
+      <input type="checkbox" name="telas" value={key} defaultChecked={selected.includes(key)} />
+      {label}
+    </label>
+  );
+  return (
+    <div className="space-y-2 rounded-md border border-line p-3">
+      <div>
+        <div className="mb-1 text-xs font-semibold text-muted">Telas (menu do topo)</div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">{TELAS.map((t) => check(t.key, t.label))}</div>
+      </div>
+      <div>
+        <div className="mb-1 text-xs font-semibold text-muted">Abas da tela Contas</div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">{ABAS_CONTAS.map((a) => check(abaKey(a.aba), a.label))}</div>
+      </div>
+      <p className="text-xs text-muted">A tela também exige a permissão correspondente acima (ex.: Categorias exige “Lançar contas”). Administrador vê tudo.</p>
     </div>
   );
 }
@@ -36,6 +60,7 @@ export default async function Usuarios({ searchParams }: { searchParams: { erro?
           <input name="password" type="password" className="input" placeholder="Senha (mín. 6 caracteres)" required minLength={6} autoComplete="new-password" />
         </div>
         <PermissionChecks />
+        <TelaChecks />
         <button className="btn btn-primary">Criar usuário</button>
       </form>
 
@@ -50,6 +75,7 @@ export default async function Usuarios({ searchParams }: { searchParams: { erro?
               <label className="flex items-center gap-1.5 text-sm"><input type="checkbox" name="active" defaultChecked={u.active} /> Ativo</label>
             </div>
             <PermissionChecks selected={u.permissions} />
+            <TelaChecks selected={u.telas} />
             <div className="flex flex-wrap items-center gap-3">
               <input name="password" type="password" className="input max-w-xs" placeholder="Nova senha (opcional, mín. 6)" minLength={6} autoComplete="new-password" />
               <SubmitButton className="btn" pendingText="Salvando…">Salvar</SubmitButton>

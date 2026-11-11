@@ -1,16 +1,15 @@
 import { prisma } from "@/lib/db";
-import { requirePermission } from "@/lib/auth";
+import { exigirTela, requirePermission } from "@/lib/auth";
 import { LancamentoForm } from "@/components/LancamentoForm";
 import { UserError } from "@/lib/errors";
 import { redirect } from "next/navigation";
 
 export default async function NovaConta({ searchParams }: { searchParams: { erro?: string; ok?: string } }) {
-  try {
-    await requirePermission("LANCAR");
-  } catch (e) {
+  const user = await requirePermission("LANCAR").catch((e) => {
     if (e instanceof UserError) redirect("/contas?erro=" + encodeURIComponent(e.message));
     throw e;
-  }
+  });
+  exigirTela(user, "LANCAR_CONTAS");
   const [suppliers, categories, paymentMethods] = await Promise.all([
     prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }),
     prisma.category.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }),

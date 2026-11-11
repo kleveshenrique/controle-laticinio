@@ -44,6 +44,8 @@ model User {
   /// Chave da foto (avatar) no S3; null = mostra as iniciais.
   avatarKey    String?
   permissions  Permission[]
+  /// Telas do menu e abas da tela Contas liberadas (chaves de src/lib/telas.ts). ADMIN vê tudo.
+  telas        String[]     @default([])
   active       Boolean      @default(true)
   createdAt    DateTime     @default(now())
 

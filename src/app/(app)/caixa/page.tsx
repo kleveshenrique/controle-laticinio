@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { can, requireUser } from "@/lib/auth";
+import { can, exigirTela, requireUser } from "@/lib/auth";
 import { brl, dateTimeBR } from "@/lib/format";
 import { criarCaixa, movimentarCaixa } from "@/app/actions";
 
 export default async function Caixa({ searchParams }: { searchParams: { id?: string; erro?: string; ok?: string } }) {
   const user = await requireUser();
   if (!can(user, "CAIXA") && !can(user, "PAGAR")) redirect("/contas?erro=" + encodeURIComponent("Você não tem acesso ao caixa."));
+  exigirTela(user, "CAIXA");
   const gerir = can(user, "CAIXA");
 
   const caixas = await prisma.cashRegister.findMany({ where: { active: true }, orderBy: { name: "asc" } });

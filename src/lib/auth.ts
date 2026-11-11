@@ -5,6 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "./db";
 import { UserError } from "./errors";
 import type { PermissionName } from "./permissions";
+import { podeVerTela, telaInicial, TELAS, type TelaKey } from "./telas";
 
 const COOKIE = "session";
 const secret = () => new TextEncoder().encode(process.env.AUTH_SECRET);
@@ -55,4 +56,14 @@ export async function requirePermission(p: PermissionName) {
   const user = await requireUser();
   if (!can(user, p)) throw new UserError("Você não tem permissão para esta ação.");
   return user;
+}
+
+/**
+ * Bloqueia a tela se o usuário não tiver acesso a ela (User.telas + permissão da tela):
+ * manda para a primeira tela liberada com a mensagem de erro (ou para "/", que mostra o aviso de sem acesso).
+ */
+export function exigirTela(user: { permissions: string[]; telas: string[] }, key: TelaKey) {
+  if (podeVerTela(user, key)) return;
+  const tela = TELAS.find((t) => t.key === key)!;
+  redirect((telaInicial(user) ?? "/") + "?erro=" + encodeURIComponent(`Você não tem acesso à tela ${tela.label}.`));
 }

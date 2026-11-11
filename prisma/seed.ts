@@ -1,5 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { CATEGORIAS } from "./categorias";
+import { TODAS_TELAS } from "../src/lib/telas";
 
 const prisma = new PrismaClient();
 
@@ -15,10 +17,11 @@ async function main() {
       email,
       passwordHash: await bcrypt.hash(password, 10),
       permissions: ["ADMIN", "LANCAR", "APROVAR", "PAGAR", "CAIXA"],
+      telas: TODAS_TELAS,
     },
   });
 
-  for (const name of ["Leite / matéria-prima", "Embalagens", "Energia", "Combustível", "Folha de pagamento", "Manutenção", "Impostos", "Outros"]) {
+  for (const name of CATEGORIAS) {
     await prisma.category.upsert({ where: { name }, update: {}, create: { name } });
   }
 

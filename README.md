@@ -16,6 +16,8 @@ No lançamento de contas, o botão **+** ao lado de fornecedor e de categoria ab
 
 Outras permissões: `CAIXA` (suprimento/saída avulsa, criar caixas) e `ADMIN` (usuários e permissões; também vale como todas as outras).
 
+**Acesso por tela** (tela *Usuários*): para cada usuário, marque quais botões do menu do topo (Painel, Contas, Lançar contas, Pagamentos, Caixa, Usuários, Fornecedores, Categorias, Formas de pagamento) e quais abas da tela *Contas* (Todas, Aprovar, Aprovada, Rejeitada, Paga, Cancelada, Vencidas) ele vê. A tela também exige a permissão correspondente (ex.: *Categorias* exige `LANCAR`); `ADMIN` vê tudo. Abrir pela URL uma tela sem acesso leva à primeira tela liberada. As telas de cadastro rápido (*nova categoria*, *novo fornecedor*, botão **+** do lançamento) dependem só da permissão `LANCAR`.
+
 ### Regras de segurança
 - Quem lançou a conta **não** aprova a própria conta; quem aprovou **não** paga a mesma conta.
 - Pagamento só ocorre se a conta estiver *aprovada* e o caixa tiver saldo; tudo numa transação (sem pagamento em duplicidade nem saldo negativo).

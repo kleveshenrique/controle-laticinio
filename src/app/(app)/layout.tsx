@@ -1,20 +1,12 @@
-import { can, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { telasVisiveis } from "@/lib/telas";
 import { NavLinks } from "@/components/NavLinks";
 import { MenuUsuario } from "@/components/MenuUsuario";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
-  const nav = [
-    { href: "/", label: "Painel", show: true },
-    { href: "/contas", label: "Contas", show: true },
-    { href: "/contas/nova", label: "Lançar contas", show: can(user, "LANCAR") },
-    { href: "/pagamentos", label: "Pagamentos", show: can(user, "PAGAR") },
-    { href: "/caixa", label: "Caixa", show: can(user, "CAIXA") || can(user, "PAGAR") },
-    { href: "/usuarios", label: "Usuários", show: can(user, "ADMIN") },
-    { href: "/fornecedores", label: "Fornecedores", show: can(user, "LANCAR") },
-    { href: "/categorias", label: "Categorias", show: can(user, "LANCAR") },
-    { href: "/formas-pagamento", label: "Formas de pagamento", show: can(user, "LANCAR") },
-  ].filter((n) => n.show);
+  // Botões do menu: telas liberadas para o usuário (tela marcada em Usuários + permissão da tela).
+  const nav = telasVisiveis(user);
 
   return (
     <div className="min-h-screen">

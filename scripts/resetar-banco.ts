@@ -2,7 +2,7 @@
  * Apaga DEFINITIVAMENTE todos os PDFs dos anexos no S3 (tudo sob S3_PREFIX, padrão "anexos/"),
  * incluindo versões antigas e marcadores de exclusão (não há como recuperar),
  * depois TODOS os dados do banco (mantém as tabelas e o histórico de migrations)
- * e em seguida roda o seed (admin, categorias e caixas: Caixa Principal, Bradesco, Brasil).
+ * e em seguida roda o seed (admin, plano de contas de prisma/categorias.ts, formas de pagamento e caixas: Caixa Principal, Bradesco, Brasil).
  *
  * Uso:  npm run db:reset           (pede confirmação)
  *       npm run db:reset -- --sim  (sem confirmação)
