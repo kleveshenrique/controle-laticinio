@@ -26,11 +26,17 @@ const telas = (fd: FormData) => fd.getAll("telas").map(String).filter((t) => TOD
 /* ---------- sessão ---------- */
 
 export async function login(formData: FormData) {
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const nome = String(formData.get("nome") ?? "").trim().replace(/\s+/g, " ");
   const password = String(formData.get("password") ?? "");
-  const user = await prisma.user.findUnique({ where: { email } });
-  const ok = user?.active && (await bcrypt.compare(password, user.passwordHash));
-  if (!user || !ok) redirect("/login?erro=" + encodeURIComponent("E-mail ou senha incorretos."));
+  // Nome não é único no banco: testa a senha em cada usuário ativo com esse nome (sem diferenciar maiúsculas).
+  const candidatos = nome
+    ? await prisma.user.findMany({ where: { name: { equals: nome, mode: "insensitive" }, active: true } })
+    : [];
+  let user: (typeof candidatos)[number] | undefined;
+  for (const c of candidatos) {
+    if (await bcrypt.compare(password, c.passwordHash)) { user = c; break; }
+  }
+  if (!user) redirect("/login?erro=" + encodeURIComponent("Usuário ou senha incorretos."));
   await createSession(user.id);
   redirect("/");
 }
@@ -786,12 +792,15 @@ export async function movimentarCaixa(formData: FormData) {
 export async function criarUsuario(formData: FormData) {
   await run("/usuarios", "/usuarios", async () => {
     await requirePermission("ADMIN");
-    const name = String(formData.get("name") ?? "").trim();
+    const name = String(formData.get("name") ?? "").trim().replace(/\s+/g, " ");
     const email = String(formData.get("email") ?? "").trim().toLowerCase();
     const password = String(formData.get("password") ?? "");
     if (name.length < 2 || !email.includes("@")) throw new UserError("Informe nome e e-mail válidos.");
     if (password.length < 6) throw new UserError("A senha precisa ter ao menos 6 caracteres.");
     if (await prisma.user.findUnique({ where: { email } })) throw new UserError("Já existe um usuário com esse e-mail.");
+    // O nome é usado no login, então não pode repetir.
+    if (await prisma.user.findFirst({ where: { name: { equals: name, mode: "insensitive" } } }))
+      throw new UserError("Já existe um usuário com esse nome.");
     await prisma.user.create({
       data: { name, email, passwordHash: await bcrypt.hash(password, 10), permissions: perms(formData), telas: telas(formData) },
     });
@@ -805,15 +814,23 @@ export async function atualizarUsuario(formData: FormData) {
   const volta = `/usuarios?salvo=${encodeURIComponent(id)}&t=${Date.now()}`;
   await run(volta, volta, async () => {
     const admin = await requirePermission("ADMIN");
+    const name = String(formData.get("name") ?? "").trim().replace(/\s+/g, " ");
+    const email = String(formData.get("email") ?? "").trim().toLowerCase();
     const permissions = perms(formData);
     const active = formData.get("active") === "on";
     const password = String(formData.get("password") ?? "");
     if (id === admin.id && (!active || !permissions.includes("ADMIN")))
       throw new UserError("Você não pode remover seu próprio acesso de administrador.");
+    if (name.length < 2 || !email.includes("@")) throw new UserError("Informe nome e e-mail válidos.");
     if (password && password.length < 6) throw new UserError("A nova senha precisa ter ao menos 6 caracteres.");
+    if (await prisma.user.findFirst({ where: { email, id: { not: id } }, select: { id: true } }))
+      throw new UserError("Já existe um usuário com esse e-mail.");
+    // O nome é usado no login, então não pode repetir.
+    if (await prisma.user.findFirst({ where: { name: { equals: name, mode: "insensitive" }, id: { not: id } }, select: { id: true } }))
+      throw new UserError("Já existe um usuário com esse nome.");
     const u = await prisma.user.update({
       where: { id },
-      data: { permissions, telas: telas(formData), active, ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}) },
+      data: { name, email, permissions, telas: telas(formData), active, ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}) },
       select: { name: true },
     });
     return `Usuário ${u.name} atualizado com sucesso${password ? " (senha alterada)" : ""}.`;

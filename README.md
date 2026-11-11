@@ -39,7 +39,7 @@ Preencha no `.env`: `AWS_REGION`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_
 O usuário IAM precisa de `s3:PutObject`, `s3:GetObject` e `s3:DeleteObject` em `arn:aws:s3:::SEU-BUCKET/anexos/*`.
 Para mover para o S3 os PDFs que já estavam no banco: `npx tsx --env-file=.env scripts/migrar-anexos-s3.ts`.
 
-Login inicial: valores de `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` — troque a senha na tela *Usuários*.
+Login inicial: usuário `Administrador` com a senha de `SEED_ADMIN_PASSWORD` — troque a senha na tela *Usuários*.
 Crie então usuários separados para lançar, aprovar e pagar.
 
 ## Próximos passos sugeridos

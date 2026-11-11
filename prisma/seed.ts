@@ -32,7 +32,7 @@ async function main() {
   for (const name of ["Caixa Principal", "Bradesco", "Brasil"]) {
     await prisma.cashRegister.upsert({ where: { name }, update: {}, create: { name } });
   }
-  console.log(`Admin: ${email}`);
+  console.log(`Admin: usuário "Administrador" (${email})`);
 }
 
 main().finally(() => prisma.$disconnect());

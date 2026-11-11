@@ -71,8 +71,18 @@ export default async function Usuarios({ searchParams }: { searchParams: { erro?
           <form key={u.id === salvo ? `${u.id}-${searchParams.t}` : u.id} action={atualizarUsuario} className="card space-y-3 p-4">
             <input type="hidden" name="userId" value={u.id} />
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div><strong className="text-sm">{u.name}</strong> <span className="text-sm text-muted">{u.email}</span></div>
+              <strong className="text-sm">{u.name}</strong>
               <label className="flex items-center gap-1.5 text-sm"><input type="checkbox" name="active" defaultChecked={u.active} /> Ativo</label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="label" htmlFor={`name-${u.id}`}>Nome (usado no login)</label>
+                <input id={`name-${u.id}`} name="name" className="input" defaultValue={u.name} required minLength={2} />
+              </div>
+              <div>
+                <label className="label" htmlFor={`email-${u.id}`}>E-mail</label>
+                <input id={`email-${u.id}`} name="email" type="email" className="input" defaultValue={u.email} required />
+              </div>
             </div>
             <PermissionChecks selected={u.permissions} />
             <TelaChecks selected={u.telas} />
