@@ -12,7 +12,8 @@ export async function middleware(req: NextRequest) {
   }
   const onLogin = req.nextUrl.pathname.startsWith("/login");
   if (!valid && !onLogin) return NextResponse.redirect(new URL("/login", req.url));
-  if (valid && onLogin) return NextResponse.redirect(new URL("/", req.url));
+  // Não redireciona /login -> / aqui: o token pode ter assinatura válida mas o usuário não existir mais
+  // (ou estar inativo / banco indisponível), o que causaria loop com o requireUser(). A página de login decide.
   return NextResponse.next();
 }
 

@@ -1,6 +1,10 @@
+import { redirect } from "next/navigation";
 import { login } from "@/app/actions";
+import { getUser } from "@/lib/auth";
 
-export default function LoginPage({ searchParams }: { searchParams: { erro?: string } }) {
+export default async function LoginPage({ searchParams }: { searchParams: { erro?: string } }) {
+  // Só volta para o painel se o usuário realmente existir e estiver ativo no banco (evita loop de redirecionamento).
+  if (await getUser()) redirect("/");
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4">
       <h1 className="mb-1 text-xl font-semibold">Controle Laticínio</h1>
