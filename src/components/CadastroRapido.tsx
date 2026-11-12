@@ -55,8 +55,8 @@ export function CadastroRapido({
               <h2 className="text-base font-semibold">{tipo === "fornecedor" ? "Novo fornecedor" : "Nova categoria"}</h2>
               <p className="text-sm text-muted">
                 {tipo === "fornecedor"
-                  ? "Com CNPJ, os dados são buscados na Receita Federal. Ao salvar, o fornecedor já fica selecionado na conta."
-                  : "Ao salvar, a categoria já fica selecionada na conta."}
+                  ? "Com CNPJ, os dados são buscados na Receita Federal. Ao salvar, o fornecedor já fica selecionado."
+                  : "Ao salvar, a categoria já fica selecionada."}
               </p>
             </div>
             <button type="button" className="btn btn-icon" aria-label="Fechar" title="Fechar" onClick={onClose}>

@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   // Busca as relações (include) numa única consulta com JOIN, em vez de uma ida ao banco por relação.
   previewFeatures = ["relationJoins"]
 }
@@ -25,6 +25,22 @@ enum AccountStatus {
   CANCELADA
 }
 
+/// Ordem de compra: PENDENTE (aguardando aprovação) → APROVADA (recebendo cotações) → CONCLUIDA (cotação aprovada, conta gerada).
+enum PurchaseOrderStatus {
+  PENDENTE
+  APROVADA
+  REJEITADA
+  CONCLUIDA
+  CANCELADA
+}
+
+enum QuoteStatus {
+  PENDENTE
+  APROVADA
+  /// Outra cotação da mesma ordem foi aprovada.
+  DESCARTADA
+}
+
 enum MovementType {
   ENTRADA
   SAIDA
@@ -34,6 +50,8 @@ enum AttachmentKind {
   PEDIDO
   NOTA_FISCAL
   BOLETO
+  /// Comprovante de pagamento (PDF, JPG ou PNG).
+  COMPROVANTE
 }
 
 model User {
@@ -49,14 +67,20 @@ model User {
   active       Boolean      @default(true)
   createdAt    DateTime     @default(now())
 
-  created      Account[]      @relation("CreatedBy")
-  reviewed     Account[]      @relation("ReviewedBy")
-  paid         Account[]      @relation("PaidBy")
-  rejections   Rejection[]
-  edits        AccountEdit[]
-  accountNotes AccountNote[]
-  canceled     Account[]      @relation("CanceledBy")
-  movements    CashMovement[]
+  created                 Account[]                @relation("CreatedBy")
+  reviewed                Account[]                @relation("ReviewedBy")
+  paid                    Account[]                @relation("PaidBy")
+  rejections              Rejection[]
+  edits                   AccountEdit[]
+  accountNotes            AccountNote[]
+  canceled                Account[]                @relation("CanceledBy")
+  movements               CashMovement[]
+  ordersCreated           PurchaseOrder[]          @relation("OrderCreatedBy")
+  ordersReviewed          PurchaseOrder[]          @relation("OrderReviewedBy")
+  quotesCreated           Quote[]                  @relation("QuoteCreatedBy")
+  quotesApproved          Quote[]                  @relation("QuoteApprovedBy")
+  orderRejections         PurchaseOrderRejection[] @relation("OrderRejectedBy")
+  orderRejectionsCanceled PurchaseOrderRejection[] @relation("OrderRejectionCanceledBy")
 }
 
 enum PersonType {
@@ -85,15 +109,17 @@ model Supplier {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @default(now()) @updatedAt
   accounts        Account[]
+  quotes          Quote[]
 
   @@index([document])
 }
 
 model Category {
-  id       String    @id @default(cuid())
-  name     String    @unique
-  active   Boolean   @default(true)
-  accounts Account[]
+  id             String          @id @default(cuid())
+  name           String          @unique
+  active         Boolean         @default(true)
+  accounts       Account[]
+  purchaseOrders PurchaseOrder[]
 }
 
 /// Formas de pagamento (Dinheiro, Boleto, Pix, Promissória...). Pix pede a chave na conta.
@@ -102,26 +128,29 @@ model PaymentMethod {
   name     String    @unique
   active   Boolean   @default(true)
   accounts Account[]
+  quotes   Quote[]
 }
 
 model Account {
-  id          String        @id @default(cuid())
-  code        Int           @unique @default(autoincrement())
-  description String
-  supplierId  String
-  categoryId  String?
+  id              String        @id @default(cuid())
+  code            Int           @unique @default(autoincrement())
+  description     String
+  supplierId      String
+  categoryId      String?
   paymentMethodId String?
   /// Chave Pix do recebedor (quando a forma de pagamento é Pix).
-  pixKey      String?
-  amount     Decimal       @db.Decimal(14, 2)
-  dueDate     DateTime      @db.Date
-  notes       String?
+  pixKey          String?
+  amount          Decimal       @db.Decimal(14, 2)
+  dueDate         DateTime      @db.Date
+  notes           String?
   /// Conta parcelada aguardando aprovação: lista de { amount, dueDate: "YYYY-MM-DD" }.
   /// Na aprovação a conta é desmembrada em uma conta por parcela e este campo volta a ser nulo.
-  parcelas    Json?
+  parcelas        Json?
   /// Contas desmembradas de uma mesma conta parcelada compartilham este id (o id da 1ª parcela).
-  parcelamentoId String?
-  status      AccountStatus @default(PENDENTE)
+  parcelamentoId  String?
+  /// Ordem de compra que originou a conta (cotação aprovada).
+  purchaseOrderId String?
+  status          AccountStatus @default(PENDENTE)
 
   createdById String
   createdAt   DateTime @default(now())
@@ -139,35 +168,108 @@ model Account {
   cancelReason   String?
   cashRegisterId String?
 
-  supplier     Supplier      @relation(fields: [supplierId], references: [id])
-  category     Category?     @relation(fields: [categoryId], references: [id])
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  category      Category?      @relation(fields: [categoryId], references: [id])
   paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
-  createdBy    User          @relation("CreatedBy", fields: [createdById], references: [id])
-  reviewedBy   User?         @relation("ReviewedBy", fields: [reviewedById], references: [id])
-  paidBy       User?         @relation("PaidBy", fields: [paidById], references: [id])
-  canceledBy   User?         @relation("CanceledBy", fields: [canceledById], references: [id])
-  cashRegister CashRegister? @relation(fields: [cashRegisterId], references: [id])
-  cashMovement CashMovement?
-  rejections   Rejection[]
-  edits        AccountEdit[]
-  attachments  Attachment[]
-  extraNotes   AccountNote[]
+  createdBy     User           @relation("CreatedBy", fields: [createdById], references: [id])
+  reviewedBy    User?          @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  paidBy        User?          @relation("PaidBy", fields: [paidById], references: [id])
+  canceledBy    User?          @relation("CanceledBy", fields: [canceledById], references: [id])
+  cashRegister  CashRegister?  @relation(fields: [cashRegisterId], references: [id])
+  cashMovement  CashMovement?
+  rejections    Rejection[]
+  edits         AccountEdit[]
+  attachments   Attachment[]
+  extraNotes    AccountNote[]
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
   @@index([status, dueDate])
   @@index([parcelamentoId])
+  @@index([purchaseOrderId])
+}
+
+/// Ordem de compra: precisa ser aprovada para receber cotações; a cotação aprovada vira conta(s) a pagar já aprovada(s).
+model PurchaseOrder {
+  id              String              @id @default(cuid())
+  code            Int                 @unique @default(autoincrement())
+  description     String
+  categoryId      String
+  notes           String?
+  status          PurchaseOrderStatus @default(PENDENTE)
+  createdById     String
+  createdAt       DateTime            @default(now())
+  reviewedById    String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  canceledAt      DateTime?
+
+  category   Category                 @relation(fields: [categoryId], references: [id])
+  createdBy  User                     @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  reviewedBy User?                    @relation("OrderReviewedBy", fields: [reviewedById], references: [id])
+  quotes     Quote[]
+  accounts   Account[]
+  rejections PurchaseOrderRejection[]
+
+  @@index([status])
+}
+
+/// Cotação de um fornecedor para uma ordem de compra.
+model Quote {
+  id              String      @id @default(cuid())
+  purchaseOrderId String
+  supplierId      String
+  paymentMethodId String
+  pixKey          String?
+  amount          Decimal     @db.Decimal(14, 2)
+  /// Vencimento (da 1ª parcela, quando parcelada).
+  dueDate         DateTime    @db.Date
+  /// Parcelas (2 ou mais): lista de { amount, dueDate: "YYYY-MM-DD" }.
+  parcelas        Json?
+  notes           String?
+  status          QuoteStatus @default(PENDENTE)
+  createdById     String
+  createdAt       DateTime    @default(now())
+  approvedById    String?
+  approvedAt      DateTime?
+
+  purchaseOrder PurchaseOrder     @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  supplier      Supplier          @relation(fields: [supplierId], references: [id])
+  paymentMethod PaymentMethod     @relation(fields: [paymentMethodId], references: [id])
+  createdBy     User              @relation("QuoteCreatedBy", fields: [createdById], references: [id])
+  approvedBy    User?             @relation("QuoteApprovedBy", fields: [approvedById], references: [id])
+  attachments   QuoteAttachment[]
+
+  @@index([purchaseOrderId])
+}
+
+/// Arquivo da proposta (PDF, JPG ou PNG) de uma cotação, no S3.
+model QuoteAttachment {
+  id          String   @id @default(cuid())
+  quoteId     String
+  fileName    String
+  size        Int
+  contentType String?
+  storageKey  String
+  createdAt   DateTime @default(now())
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
 }
 
 /// Arquivos PDF anexados à conta (pedido e boletos), guardados no próprio banco.
 model Attachment {
-  id         String         @id @default(cuid())
-  accountId  String
-  kind       AttachmentKind
-  fileName   String
-  size       Int
+  id          String         @id @default(cuid())
+  accountId   String
+  kind        AttachmentKind
+  fileName    String
+  size        Int
+  /// Tipo do arquivo (application/pdf, image/jpeg ou image/png). null = PDF (anexos antigos).
+  contentType String?
   // PDF no AWS S3 (chave do objeto). Anexos antigos podem ainda ter os bytes em `data` até rodar scripts/migrar-anexos-s3.ts.
-  storageKey String?
-  data       Bytes?
-  createdAt  DateTime       @default(now())
+  storageKey  String?
+  data        Bytes?
+  createdAt   DateTime       @default(now())
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -242,4 +344,22 @@ model AccountNote {
   user    User    @relation(fields: [userId], references: [id])
 
   @@index([accountId, createdAt])
+}
+
+/// Histórico de rejeições da ordem de compra (inclusive as que foram canceladas depois).
+model PurchaseOrderRejection {
+  id              String    @id @default(cuid())
+  purchaseOrderId String
+  userId          String
+  reason          String
+  createdAt       DateTime  @default(now())
+  /// Preenchidos quando a rejeição é cancelada (a ordem volta a aguardar aprovação).
+  canceledById    String?
+  canceledAt      DateTime?
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  user          User          @relation("OrderRejectedBy", fields: [userId], references: [id])
+  canceledBy    User?         @relation("OrderRejectionCanceledBy", fields: [canceledById], references: [id])
+
+  @@index([purchaseOrderId])
 }

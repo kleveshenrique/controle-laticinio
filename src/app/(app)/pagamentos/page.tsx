@@ -27,7 +27,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
       where: { status: "PAGA" },
       orderBy: { paidAt: "desc" },
       take: 10,
-      include: { supplier: true, paidBy: true, cashRegister: true },
+      include: { supplier: true, paidBy: true, cashRegister: true, attachments: { where: { kind: "COMPROVANTE" }, select: { id: true, kind: true, fileName: true }, orderBy: { createdAt: "asc" } } },
     }),
   ]);
   const [parcelamentos, anexosExibidos] = await Promise.all([codigosParcelamento(contas), comNotasDaPrimeiraParcela(contas)]);
@@ -77,7 +77,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: { err
         <div className="card divide-y divide-line">
           {recentes.map((a) => (
             <div key={a.id} className="flex flex-wrap justify-between gap-2 px-4 py-2 text-sm">
-              <span>#{a.code} · {a.supplier.name} <span className="text-xs text-muted">— {a.paidBy?.name}, {dateTimeBR(a.paidAt)}, {a.cashRegister?.name}</span><Observacoes recolher notes={a.notes} /></span>
+              <span>#{a.code} · {a.supplier.name} <span className="text-xs text-muted">— {a.paidBy?.name}, {dateTimeBR(a.paidAt)}, {a.cashRegister?.name}</span><Observacoes recolher notes={a.notes} /><Anexos anexos={a.attachments} /></span>
               <strong>{brl(a.amount)}</strong>
             </div>
           ))}

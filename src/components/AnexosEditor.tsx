@@ -6,7 +6,7 @@ import { MAX_ANEXOS, TIPOS_ANEXO, type TipoAnexo } from "@/lib/anexos";
 export type AnexoExistente = { id: string; kind: TipoAnexo; fileName: string };
 export type NovosAnexos = Partial<Record<TipoAnexo, File[]>>;
 
-/** Lista os anexos existentes de uma conta (com opção de remover) e permite incluir novos PDFs por tipo. */
+/** Lista os anexos existentes de uma conta (com opção de remover) e permite incluir novos arquivos (PDF, JPG ou PNG) por tipo. */
 export function AnexosEditor({
   tipos,
   anexos,
@@ -81,7 +81,7 @@ export function AnexosEditor({
               />
             ) : (
               <p className="text-xs font-medium text-muted">
-                {label} <span className="font-normal">({existentes.length}/{limite} PDF) · {motivoBloqueio(kind)}</span>
+                {label} <span className="font-normal">({existentes.length}/{limite}) · {motivoBloqueio(kind)}</span>
               </p>
             )}
           </section>

@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { getUser } from "@/lib/auth";
 import { lerPdf } from "@/lib/storage";
 
-/** Abre o PDF anexado a uma conta (pedido, boleto ou nota fiscal). Só para usuários logados. */
+/** Abre o arquivo (PDF, JPG ou PNG) anexado a uma conta. Só para usuários logados. */
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   if (!(await getUser())) return new Response("Não autorizado", { status: 401 });
   const anexo = await prisma.attachment.findUnique({ where: { id: params.id } });
@@ -25,7 +25,8 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
   return new Response(body, {
     headers: {
-      "Content-Type": "application/pdf",
+      // Anexos antigos não têm o tipo gravado: são todos PDF.
+      "Content-Type": anexo.contentType ?? "application/pdf",
       "Content-Length": String(anexo.size),
       "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(anexo.fileName)}`,
       "X-Content-Type-Options": "nosniff",

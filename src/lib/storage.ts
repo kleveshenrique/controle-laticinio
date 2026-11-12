@@ -17,15 +17,17 @@ function bucket() {
 
 const prefixo = () => (process.env.S3_PREFIX ?? "anexos").replace(/\/+$/, "");
 
-/** Envia um PDF e devolve a chave do objeto no bucket. */
-export async function enviarPdf(data: Buffer, fileName: string): Promise<string> {
-  const key = `${prefixo()}/${new Date().toISOString().slice(0, 7)}/${randomUUID()}.pdf`;
+const EXTENSOES: Record<string, string> = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" };
+
+/** Envia um anexo (PDF, JPG ou PNG) e devolve a chave do objeto no bucket. */
+export async function enviarPdf(data: Buffer, fileName: string, contentType = "application/pdf"): Promise<string> {
+  const key = `${prefixo()}/${new Date().toISOString().slice(0, 7)}/${randomUUID()}.${EXTENSOES[contentType] ?? "pdf"}`;
   await s3().send(
     new PutObjectCommand({
       Bucket: bucket(),
       Key: key,
       Body: data,
-      ContentType: "application/pdf",
+      ContentType: contentType,
       ContentLength: data.length,
       Metadata: { "original-name": encodeURIComponent(fileName) },
       ServerSideEncryption: "AES256",
@@ -34,9 +36,10 @@ export async function enviarPdf(data: Buffer, fileName: string): Promise<string>
   return key;
 }
 
-/** Copia um PDF dentro do bucket e devolve a chave da cópia (ex.: ao desmembrar uma conta parcelada). */
+/** Copia um anexo dentro do bucket (mantendo a extensão) e devolve a chave da cópia (ex.: ao desmembrar uma conta parcelada). */
 export async function copiarPdf(origem: string): Promise<string> {
-  const key = `${prefixo()}/${new Date().toISOString().slice(0, 7)}/${randomUUID()}.pdf`;
+  const ext = /\.(pdf|jpg|png)$/.exec(origem)?.[1] ?? "pdf";
+  const key = `${prefixo()}/${new Date().toISOString().slice(0, 7)}/${randomUUID()}.${ext}`;
   await s3().send(
     new CopyObjectCommand({
       Bucket: bucket(),
@@ -151,7 +154,7 @@ export async function apagarTodosPdfsDefinitivo(): Promise<{ arquivos: number; v
   return { arquivos: chaves.size, versoes };
 }
 
-type PdfLido = { kind: string; fileName: string; size: number; data: Buffer };
+type PdfLido = { kind: string; fileName: string; size: number; contentType?: string; data: Buffer };
 
 /**
  * Envia os PDFs ao S3 e executa `salvar` com os registros prontos para o banco (com storageKey, sem os bytes).
@@ -165,7 +168,7 @@ export async function comPdfsNoS3<T extends PdfLido, R>(
   try {
     const registros = [];
     for (const { data, ...resto } of arquivos) {
-      const storageKey = await enviarPdf(data, resto.fileName);
+      const storageKey = await enviarPdf(data, resto.fileName, resto.contentType);
       enviados.push(storageKey);
       registros.push({ ...resto, storageKey });
     }

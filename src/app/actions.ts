@@ -192,7 +192,15 @@ async function excluirDoS3(keys: (string | null)[]) {
   }
 }
 
-/** Lê os PDFs enviados num campo do formulário, validando quantidade, tamanho e tipo. */
+/** Tipo real do arquivo pela assinatura (primeiros bytes): PDF, JPG ou PNG. */
+function tipoDoArquivo(data: Buffer): "application/pdf" | "image/jpeg" | "image/png" | null {
+  if (data.subarray(0, 5).toString("latin1") === "%PDF-") return "application/pdf";
+  if (data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return "image/jpeg";
+  if (data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  return null;
+}
+
+/** Lê os anexos enviados num campo do formulário, validando quantidade, tamanho e tipo (PDF, JPG ou PNG). */
 async function lerPdfs(formData: FormData, field: string, kind: AttachmentKind, label: string, max = MAX_ANEXOS) {
   const files = formData.getAll(field).filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length > max) throw new UserError(`${label}: no máximo ${max} arquivo(s).`);
@@ -200,8 +208,9 @@ async function lerPdfs(formData: FormData, field: string, kind: AttachmentKind, 
     files.map(async (f) => {
       if (f.size > MAX_PDF_BYTES) throw new UserError(`${label}: "${f.name}" passa de ${MAX_PDF_MB} MB.`);
       const data = Buffer.from(await f.arrayBuffer());
-      if (data.subarray(0, 5).toString("latin1") !== "%PDF-") throw new UserError(`${label}: "${f.name}" não é um PDF.`);
-      return { kind, fileName: f.name.slice(0, 200), size: f.size, data };
+      const contentType = tipoDoArquivo(data);
+      if (!contentType) throw new UserError(`${label}: "${f.name}" não é PDF, JPG ou PNG.`);
+      return { kind, fileName: f.name.slice(0, 200), size: f.size, contentType, data };
     }),
   );
 }
@@ -473,9 +482,12 @@ export async function editarConta(formData: FormData) {
     const { remover, novos } = aprovada
       ? { remover: [] as string[], novos: [] as Awaited<ReturnType<typeof lerPdfs>> }
       : await lerAlteracoesAnexos(formData, acc.attachments, {
-          podeAlterar: (k) => k !== "NOTA_FISCAL",
+          podeAlterar: (k) => k === "PEDIDO" || k === "BOLETO",
           podeRemover: true,
-          negado: () => "A nota fiscal só pode ser anexada depois que a conta for aprovada.",
+          negado: (k) =>
+            k === "COMPROVANTE"
+              ? "O comprovante de pagamento só pode ser anexado ao pagar a conta."
+              : "A nota fiscal só pode ser anexada depois que a conta for aprovada.",
           limites: { BOLETO: Math.max(1, parcelas.length) },
         });
     // Antes da aprovação o limite vale sempre (inclusive ao diminuir as parcelas): um boleto por parcela.
@@ -564,7 +576,9 @@ export async function gerenciarAnexos(formData: FormData) {
           ? "O pedido não pode mais ser anexado depois da aprovação."
           : k === "NOTA_FISCAL"
             ? "A nota fiscal só pode ser anexada na 1ª parcela."
-            : "Só o administrador pode remover anexos.",
+            : k === "COMPROVANTE"
+              ? "O comprovante de pagamento é anexado ao pagar a conta."
+              : "Só o administrador pode remover anexos.",
       // Depois de aprovada, cada conta é uma parcela: um boleto só.
       limites: { BOLETO: 1 },
     });
@@ -590,7 +604,7 @@ export async function aprovar(formData: FormData) {
     const accounts = await prisma.account.findMany({
       where: { id: { in: ids(formData) }, status: "PENDENTE" },
       include: {
-        attachments: { select: { id: true, kind: true, fileName: true, size: true, storageKey: true, data: true }, orderBy: { createdAt: "asc" } },
+        attachments: { select: { id: true, kind: true, fileName: true, size: true, contentType: true, storageKey: true, data: true }, orderBy: { createdAt: "asc" } },
       },
     });
     if (!accounts.length) throw new UserError("Selecione ao menos uma conta pendente.");
@@ -603,7 +617,7 @@ export async function aprovar(formData: FormData) {
     // Pedido e nota fiscal: cada parcela recebe sua cópia (excluir o anexo de uma parcela não afeta as outras).
     const copias: string[] = [];
     try {
-      type Anexo = { kind: AttachmentKind; fileName: string; size: number; storageKey: string | null; data: Buffer | null };
+      type Anexo = { kind: AttachmentKind; fileName: string; size: number; contentType: string | null; storageKey: string | null; data: Buffer | null };
       const desmembrar: { a: (typeof accounts)[number]; parcelas: ParcelaConta[]; anexosPorParcela: Anexo[][]; boletos: string[] }[] = [];
       for (const a of accounts) {
         const parcelas = lerParcelas(a.parcelas);
@@ -615,7 +629,7 @@ export async function aprovar(formData: FormData) {
           for (const x of a.attachments.filter((x) => x.kind !== "BOLETO")) {
             const storageKey = x.storageKey ? await copiarPdf(x.storageKey) : null;
             if (storageKey) copias.push(storageKey);
-            anexos.push({ kind: x.kind, fileName: x.fileName, size: x.size, storageKey, data: storageKey ? null : x.data });
+            anexos.push({ kind: x.kind, fileName: x.fileName, size: x.size, contentType: x.contentType, storageKey, data: storageKey ? null : x.data });
           }
           anexosPorParcela.push(anexos);
         }
@@ -704,8 +718,12 @@ export async function pagar(formData: FormData) {
     const selected = ids(formData);
     if (!selected.length) throw new UserError("Selecione ao menos uma conta.");
     if (!cashRegisterId) throw new UserError("Escolha o caixa.");
+    // Comprovante de pagamento (opcional): PDF, JPG ou PNG, só no pagamento de uma conta por vez.
+    const comprovantes = await lerPdfs(formData, TIPOS_ANEXO.COMPROVANTE.campo, "COMPROVANTE", TIPOS_ANEXO.COMPROVANTE.label);
+    if (comprovantes.length && selected.length > 1) throw new UserError("O comprovante só pode ser anexado ao pagar uma conta por vez.");
 
-    await prisma.$transaction(
+    // O comprovante vai para o S3 antes; se o pagamento falhar, é removido do bucket.
+    await comPdfsNoS3(comprovantes, (enviados) => prisma.$transaction(
       async (tx) => {
         const accounts = await tx.account.findMany({ where: { id: { in: selected } }, orderBy: { dueDate: "asc" } });
         for (const acc of accounts) {
@@ -737,9 +755,10 @@ export async function pagar(formData: FormData) {
           });
         }
         if (!accounts.length) throw new UserError("Contas não encontradas.");
+        if (enviados.length) await tx.attachment.createMany({ data: enviados.map((a) => ({ ...a, accountId: accounts[0].id })) });
       },
       { timeout: 30000 },
-    );
+    ));
     return `${selected.length} conta(s) paga(s) e baixada(s) no caixa.`;
   });
 }
@@ -1017,5 +1036,392 @@ export async function adicionarObservacao(formData: FormData) {
     if (acc.status !== "APROVADA") throw new UserError(`Conta #${acc.code} não está mais aguardando pagamento.`);
     await prisma.accountNote.create({ data: { accountId: acc.id, userId: user.id, text: texto } });
     return `Observação gravada na conta #${acc.code}.`;
+  });
+}
+
+/* ---------- ordens de compra e cotações ---------- */
+// Fluxo: ordem de compra (quem lança) → aprovação da ordem (quem aprova) → cotações (quem lança)
+// → aprovação de uma cotação (quem aprova) → a cotação vira conta(s) já aprovada(s) em Pagamentos.
+
+const ordemSchema = z.object({
+  description: z.string().trim().min(2, "Informe a descrição.").max(300, "Descrição: no máximo 300 caracteres."),
+  category: z.string().trim().min(2, "Informe a categoria."),
+  notes: z.string().trim().max(1000, "Observações: no máximo 1000 caracteres.").optional(),
+});
+
+export async function criarOrdemCompra(formData: FormData) {
+  await run("/ordens/nova", "/ordens?status=PENDENTE", async () => {
+    const user = await requirePermission("LANCAR");
+    const parsed = ordemSchema.safeParse({
+      description: formData.get("description") ?? "",
+      category: formData.get("category") ?? "",
+      notes: formData.get("notes") ?? "",
+    });
+    if (!parsed.success) throw new UserError(parsed.error.issues[0].message);
+    const r = parsed.data;
+    const { categorias } = await buscarCadastros([], [r.category]);
+    const oc = await prisma.purchaseOrder.create({
+      data: { description: r.description, categoryId: categorias.get(r.category)!.id, notes: r.notes || null, createdById: user.id },
+    });
+    return `Ordem de compra #${oc.code} criada, aguardando aprovação.`;
+  });
+}
+
+/** Busca a ordem e confere se o usuário pode aprová-la/decidir a cotação (quem criou não aprova, exceto o administrador). */
+async function ordemParaAprovar(id: string, user: { id: string; permissions: string[] }) {
+  const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
+  if (!oc) throw new UserError("Ordem de compra não encontrada.");
+  if (oc.createdById === user.id && !can(user, "ADMIN")) throw new UserError("Você criou esta ordem de compra; outra pessoa precisa aprovar.");
+  return oc;
+}
+
+export async function aprovarOrdemCompra(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+    const user = await requirePermission("APROVAR");
+    const oc = await ordemParaAprovar(id, user);
+    const res = await prisma.purchaseOrder.updateMany({
+      where: { id, status: "PENDENTE" },
+      data: { status: "APROVADA", reviewedById: user.id, reviewedAt: new Date(), rejectionReason: null },
+    });
+    if (!res.count) throw new UserError(`Ordem de compra #${oc.code} não está aguardando aprovação.`);
+    return `Ordem de compra #${oc.code} aprovada. Já pode receber cotações.`;
+  });
+}
+
+export async function rejeitarOrdemCompra(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+    const user = await requirePermission("APROVAR");
+    const motivo = String(formData.get("motivo") ?? "").trim();
+    if (motivo.length < 3) throw new UserError("Informe o motivo da rejeição.");
+    const oc = await ordemParaAprovar(id, user);
+    const reason = motivo.slice(0, 1000);
+    await prisma.$transaction(async (tx) => {
+      const agora = new Date();
+      const res = await tx.purchaseOrder.updateMany({
+        where: { id, status: "PENDENTE" },
+        data: { status: "REJEITADA", reviewedById: user.id, reviewedAt: agora, rejectionReason: reason },
+      });
+      if (!res.count) throw new UserError(`Ordem de compra #${oc.code} não está aguardando aprovação.`);
+      // Histórico: a rejeição continua registrada mesmo se for cancelada depois.
+      await tx.purchaseOrderRejection.create({ data: { purchaseOrderId: id, userId: user.id, reason, createdAt: agora } });
+    });
+    return `Ordem de compra #${oc.code} rejeitada.`;
+  });
+}
+
+/** Cancela uma ordem ainda sem cotação aprovada. Só quem criou ou o administrador. */
+export async function cancelarOrdemCompra(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+    const user = await requireUser();
+    const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
+    if (!oc) throw new UserError("Ordem de compra não encontrada.");
+    if (oc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem criou (ou o administrador) pode cancelar a ordem de compra.");
+    const res = await prisma.purchaseOrder.updateMany({
+      where: { id, status: { in: ["PENDENTE", "APROVADA", "REJEITADA"] } },
+      data: { status: "CANCELADA", canceledAt: new Date() },
+    });
+    if (!res.count) throw new UserError(`Ordem de compra #${oc.code} não pode mais ser cancelada.`);
+    return `Ordem de compra #${oc.code} cancelada.`;
+  });
+}
+
+/**
+ * Lê e valida os dados de uma cotação do formulário (mesmas regras do lançamento de contas;
+ * descrição e categoria vêm da própria ordem). Devolve os campos prontos para gravar e os arquivos novos.
+ */
+async function lerCotacao(formData: FormData, oc: { description: string }) {
+  let parcelasRaw: unknown;
+  try {
+    const v = formData.get("parcelas");
+    parcelasRaw = v ? JSON.parse(String(v)) : undefined;
+  } catch {
+    throw new UserError("Parcelas inválidas.");
+  }
+  const parsed = rowSchema.safeParse({
+    description: oc.description,
+    supplier: formData.get("supplier") ?? "",
+    category: "ordem",
+    paymentMethod: formData.get("paymentMethod") ?? "",
+    pixKey: formData.get("pixKey") ?? "",
+    amount: formData.get("amount") ?? "",
+    dueDate: formData.get("dueDate") ?? "",
+    notes: formData.get("notes") ?? "",
+    parcelas: parcelasRaw,
+  });
+  if (!parsed.success) throw new UserError(parsed.error.issues[0].message);
+  const r = parsed.data;
+  const amount = parseMoney(r.amount);
+  if (!(amount > 0)) throw new UserError("Informe um valor válido.");
+  const parcelas: ParcelaConta[] =
+    r.parcelas && r.parcelas.length >= 2
+      ? r.parcelas.map((p, k) => {
+          const valor = parseMoney(p.amount);
+          if (!(valor > 0)) throw new UserError(`Valor inválido na parcela ${k + 1}.`);
+          return { amount: valor, dueDate: p.dueDate };
+        })
+      : [];
+  if (parcelas.length) {
+    const soma = parcelas.reduce((s, p) => s + Math.round(p.amount * 100), 0);
+    if (soma !== Math.round(amount * 100))
+      throw new UserError(`A soma das parcelas (${brl(soma / 100)}) difere do valor da cotação (${brl(amount)}).`);
+    r.dueDate = parcelas[0].dueDate;
+  }
+  const { fornecedores, formas } = await buscarCadastros([r.supplier], [], [r.paymentMethod]);
+  const forma = formas.get(r.paymentMethod)!;
+  const pixKey = chavePix(forma.name, r.pixKey);
+  // A proposta usa o tipo PEDIDO só na leitura/validação; na cotação fica em QuoteAttachment.
+  const arquivos = await lerPdfs(formData, "anexo", "PEDIDO", "Proposta");
+  return {
+    dados: {
+      supplierId: fornecedores.get(r.supplier)!.id,
+      paymentMethodId: forma.id,
+      pixKey,
+      amount,
+      dueDate: new Date(r.dueDate + "T00:00:00.000Z"),
+      parcelas: parcelas.length ? (parcelas as Prisma.InputJsonValue) : Prisma.DbNull,
+      notes: r.notes || null,
+    },
+    arquivos,
+  };
+}
+
+const registroAnexoCotacao = ({ fileName, size, contentType, storageKey }: { fileName: string; size: number; contentType?: string; storageKey: string }) =>
+  ({ fileName, size, contentType, storageKey });
+
+/** Inclui uma cotação (fornecedor, valor, vencimento/parcelas, forma de pagamento e proposta anexada) numa ordem aprovada. */
+export async function adicionarCotacao(formData: FormData) {
+  const id = String(formData.get("purchaseOrderId") ?? "");
+  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+    const user = await requirePermission("LANCAR");
+    const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
+    if (!oc) throw new UserError("Ordem de compra não encontrada.");
+    if (oc.status !== "APROVADA") throw new UserError(`Ordem de compra #${oc.code} não está recebendo cotações.`);
+    const { dados, arquivos } = await lerCotacao(formData, oc);
+
+    await comPdfsNoS3(arquivos, (enviados) =>
+      prisma.quote.create({
+        data: { ...dados, purchaseOrderId: oc.id, createdById: user.id, attachments: { create: enviados.map(registroAnexoCotacao) } },
+      }),
+    );
+    return `Cotação incluída na ordem de compra #${oc.code}.`;
+  });
+}
+
+/** Edita uma cotação ainda não decidida (dados e arquivos da proposta). Só quem incluiu ou o administrador. */
+export async function editarCotacao(formData: FormData) {
+  const quote = await prisma.quote.findUnique({
+    where: { id: String(formData.get("id") ?? "") },
+    include: { purchaseOrder: true, attachments: { select: { id: true, storageKey: true } } },
+  });
+  const volta = quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens";
+  await run(volta, volta, async () => {
+    const user = await requirePermission("LANCAR");
+    if (!quote) throw new UserError("Cotação não encontrada.");
+    if (quote.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem incluiu (ou o administrador) pode editar a cotação.");
+    if (quote.status !== "PENDENTE" || quote.purchaseOrder.status !== "APROVADA") throw new UserError("Esta cotação não pode mais ser editada.");
+    const { dados, arquivos } = await lerCotacao(formData, quote.purchaseOrder);
+    const remover = quote.attachments.filter((a) => formData.getAll("remover").map(String).includes(a.id));
+    if (quote.attachments.length - remover.length + arquivos.length > MAX_ANEXOS)
+      throw new UserError(`Proposta: no máximo ${MAX_ANEXOS} arquivo(s) por cotação.`);
+
+    await comPdfsNoS3(arquivos, (enviados) =>
+      prisma.$transaction(async (tx) => {
+        const res = await tx.quote.updateMany({ where: { id: quote.id, status: "PENDENTE" }, data: dados });
+        if (!res.count) throw new UserError("Esta cotação não pode mais ser editada.");
+        await tx.quoteAttachment.deleteMany({ where: { id: { in: remover.map((a) => a.id) }, quoteId: quote.id } });
+        if (enviados.length) await tx.quoteAttachment.createMany({ data: enviados.map((a) => ({ ...registroAnexoCotacao(a), quoteId: quote.id })) });
+        // Por último: exclui no S3 e só então a transação confirma a exclusão no banco.
+        await excluirDoS3(remover.map((a) => a.storageKey));
+      }, { timeout: 30000 }),
+    );
+    return `Cotação da ordem de compra #${quote.purchaseOrder.code} atualizada.`;
+  });
+}
+
+/** Exclui uma cotação ainda não decidida. Só quem incluiu ou o administrador. */
+export async function excluirCotacao(formData: FormData) {
+  const quote = await prisma.quote.findUnique({
+    where: { id: String(formData.get("id") ?? "") },
+    include: { purchaseOrder: true, attachments: { select: { storageKey: true } } },
+  });
+  const volta = quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens";
+  await run(volta, volta, async () => {
+    const user = await requirePermission("LANCAR");
+    if (!quote) throw new UserError("Cotação não encontrada.");
+    if (quote.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem incluiu (ou o administrador) pode excluir a cotação.");
+    if (quote.status !== "PENDENTE" || quote.purchaseOrder.status !== "APROVADA") throw new UserError("Esta cotação não pode mais ser excluída.");
+    await prisma.$transaction(async (tx) => {
+      const res = await tx.quote.deleteMany({ where: { id: quote.id, status: "PENDENTE" } });
+      if (!res.count) throw new UserError("Esta cotação não pode mais ser excluída.");
+      // Por último: exclui no S3 e só então a transação confirma a exclusão no banco.
+      await excluirDoS3(quote.attachments.map((a) => a.storageKey));
+    });
+    return `Cotação excluída da ordem de compra #${quote.purchaseOrder.code}.`;
+  });
+}
+
+/**
+ * Aprova uma cotação: a ordem é concluída, as demais cotações são descartadas e a cotação vira conta(s) já aprovada(s)
+ * (uma por parcela), que vão direto para Pagamentos. A proposta é copiada para cada conta como "Pedido".
+ */
+export async function aprovarCotacao(formData: FormData) {
+  const quote = await prisma.quote.findUnique({
+    where: { id: String(formData.get("id") ?? "") },
+    include: { attachments: true },
+  });
+  const volta = quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens";
+  await run(volta, volta, async () => {
+    const user = await requirePermission("APROVAR");
+    if (!quote) throw new UserError("Cotação não encontrada.");
+    const oc = await ordemParaAprovar(quote.purchaseOrderId, user);
+    if (oc.status !== "APROVADA" || quote.status !== "PENDENTE") throw new UserError(`Ordem de compra #${oc.code} não tem esta cotação em aberto.`);
+
+    const lista = lerParcelas(quote.parcelas);
+    const parcelas: ParcelaConta[] = lista.length >= 2 ? lista : [{ amount: Number(quote.amount), dueDate: quote.dueDate.toISOString().slice(0, 10) }];
+    const n = parcelas.length;
+
+    // Cópia da proposta para cada conta (excluir o anexo de uma conta não afeta as outras).
+    const copias: string[] = [];
+    try {
+      const anexosPorConta: { kind: "PEDIDO"; fileName: string; size: number; contentType: string | null; storageKey: string }[][] = [];
+      for (let k = 0; k < n; k++) {
+        const anexos = [];
+        for (const a of quote.attachments) {
+          const storageKey = await copiarPdf(a.storageKey);
+          copias.push(storageKey);
+          anexos.push({ kind: "PEDIDO" as const, fileName: a.fileName, size: a.size, contentType: a.contentType, storageKey });
+        }
+        anexosPorConta.push(anexos);
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const agora = new Date();
+        const fechou = await tx.purchaseOrder.updateMany({ where: { id: oc.id, status: "APROVADA" }, data: { status: "CONCLUIDA" } });
+        const aprovou = await tx.quote.updateMany({ where: { id: quote.id, status: "PENDENTE" }, data: { status: "APROVADA", approvedById: user.id, approvedAt: agora } });
+        if (!fechou.count || !aprovou.count) throw new UserError("A ordem de compra foi alterada por outra pessoa. Tente novamente.");
+        await tx.quote.updateMany({ where: { purchaseOrderId: oc.id, id: { not: quote.id }, status: "PENDENTE" }, data: { status: "DESCARTADA" } });
+
+        // Parcelada: as contas compartilham o parcelamentoId (o id da 1ª), como no lançamento normal.
+        let parcelamentoId: string | null = null;
+        for (let k = 0; k < n; k++) {
+          const conta: { id: string } = await tx.account.create({
+            data: {
+              description: `OC #${oc.code} — ${oc.description}${n > 1 ? ` (${k + 1}/${n})` : ""}`,
+              supplierId: quote.supplierId,
+              categoryId: oc.categoryId,
+              paymentMethodId: quote.paymentMethodId,
+              pixKey: quote.pixKey,
+              amount: parcelas[k].amount,
+              dueDate: new Date(parcelas[k].dueDate + "T00:00:00.000Z"),
+              notes: [oc.notes, quote.notes].filter(Boolean).join("\n") || null,
+              status: "APROVADA",
+              createdById: oc.createdById,
+              reviewedById: user.id,
+              reviewedAt: agora,
+              purchaseOrderId: oc.id,
+              parcelamentoId,
+              attachments: { create: anexosPorConta[k] },
+            },
+          });
+          if (n > 1 && k === 0) {
+            parcelamentoId = conta.id;
+            await tx.account.update({ where: { id: conta.id }, data: { parcelamentoId } });
+          }
+        }
+      }, { timeout: 30000 });
+    } catch (e) {
+      await removerPdfs(copias);
+      throw e;
+    }
+    return `Cotação aprovada: ordem de compra #${oc.code} concluída e ${n > 1 ? `${n} contas enviadas` : "conta enviada"} para pagamento.`;
+  });
+}
+
+/** Desfaz a rejeição de uma ordem de compra: ela volta a aguardar aprovação. Mesma regra de quem aprova. */
+export async function cancelarRejeicaoOrdem(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+    const user = await requirePermission("APROVAR");
+    const oc = await ordemParaAprovar(id, user);
+    await prisma.$transaction(async (tx) => {
+      const res = await tx.purchaseOrder.updateMany({
+        where: { id, status: "REJEITADA" },
+        data: { status: "PENDENTE", reviewedById: null, reviewedAt: null, rejectionReason: null },
+      });
+      if (!res.count) throw new UserError(`Ordem de compra #${oc.code} não está rejeitada.`);
+      // Marca a última rejeição como cancelada (fica no histórico, com quem cancelou e quando).
+      const ultima = await tx.purchaseOrderRejection.findFirst({ where: { purchaseOrderId: id, canceledAt: null }, orderBy: { createdAt: "desc" } });
+      if (ultima) await tx.purchaseOrderRejection.update({ where: { id: ultima.id }, data: { canceledById: user.id, canceledAt: new Date() } });
+    });
+    return `Rejeição cancelada: ordem de compra #${oc.code} voltou para aprovação.`;
+  });
+}
+
+/**
+ * Altera descrição, categoria e observações de uma ordem de compra concluída. Só quem criou ou o administrador.
+ * As contas geradas que ainda não foram pagas acompanham a nova descrição e categoria.
+ */
+export async function editarOrdemCompra(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  const volta = String(formData.get("volta") ?? "") === "lista" ? "/ordens?status=CONCLUIDA" : `/ordens/${id}`;
+  await run(volta, volta, async () => {
+    const user = await requireUser();
+    const oc = await prisma.purchaseOrder.findUnique({ where: { id }, include: { category: true } });
+    if (!oc) throw new UserError("Ordem de compra não encontrada.");
+    if (oc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem criou (ou o administrador) pode alterar a ordem de compra.");
+    if (oc.status !== "CONCLUIDA") throw new UserError(`Ordem de compra #${oc.code} não está concluída.`);
+    const parsed = ordemSchema.safeParse({
+      description: formData.get("description") ?? "",
+      category: formData.get("category") ?? "",
+      notes: formData.get("notes") ?? "",
+    });
+    if (!parsed.success) throw new UserError(parsed.error.issues[0].message);
+    const r = parsed.data;
+    const mudouCat = r.category.toLowerCase() !== oc.category.name.toLowerCase();
+    const categoryId = mudouCat ? (await buscarCadastros([], [r.category])).categorias.get(r.category)!.id : oc.categoryId;
+    if (r.description === oc.description && categoryId === oc.categoryId && (r.notes || null) === oc.notes) throw new UserError("Nenhuma alteração feita.");
+
+    await prisma.$transaction(async (tx) => {
+      await tx.purchaseOrder.update({ where: { id }, data: { description: r.description, categoryId, notes: r.notes || null } });
+      // Contas ainda a pagar: descrição "OC #N — descrição (k/n)" e categoria acompanham a ordem.
+      const contas = await tx.account.findMany({ where: { purchaseOrderId: id, status: "APROVADA" }, select: { id: true, description: true } });
+      for (const c of contas) {
+        const parcela = /\s\(\d+\/\d+\)$/.exec(c.description)?.[0] ?? "";
+        await tx.account.update({ where: { id: c.id }, data: { description: `OC #${oc.code} — ${r.description}${parcela}`, categoryId } });
+      }
+    });
+    return `Ordem de compra #${oc.code} alterada.`;
+  });
+}
+
+/**
+ * Exclui uma ordem de compra concluída: a ordem fica cancelada (com o histórico) e as contas geradas que ainda
+ * não foram pagas são canceladas também. Se alguma conta já foi paga, a ordem não pode ser excluída.
+ * Mesma permissão de excluir conta aprovada: quem lança, quem aprova ou o administrador.
+ */
+export async function excluirOrdemCompra(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  await run("/ordens?status=CONCLUIDA", "/ordens?status=CANCELADA", async () => {
+    const user = await requireUser();
+    if (!can(user, "ADMIN") && !can(user, "LANCAR") && !can(user, "APROVAR")) throw new UserError("Você não tem permissão para excluir ordens de compra.");
+    const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
+    if (!oc) throw new UserError("Ordem de compra não encontrada.");
+    let canceladas = 0;
+    await prisma.$transaction(async (tx) => {
+      const pagas = await tx.account.findMany({ where: { purchaseOrderId: id, status: "PAGA" }, select: { code: true } });
+      if (pagas.length)
+        throw new UserError(`Ordem de compra #${oc.code} tem conta(s) já paga(s) (${pagas.map((p) => `#${p.code}`).join(", ")}) e não pode ser excluída.`);
+      const res = await tx.purchaseOrder.updateMany({ where: { id, status: "CONCLUIDA" }, data: { status: "CANCELADA", canceledAt: new Date() } });
+      if (!res.count) throw new UserError(`Ordem de compra #${oc.code} não está concluída.`);
+      const contas = await tx.account.updateMany({
+        where: { purchaseOrderId: id, status: { in: ["PENDENTE", "APROVADA", "REJEITADA"] } },
+        data: { status: "CANCELADA", canceledById: user.id, canceledAt: new Date(), cancelReason: `Ordem de compra #${oc.code} excluída.` },
+      });
+      canceladas = contas.count;
+    });
+    return `Ordem de compra #${oc.code} excluída${canceladas ? ` e ${canceladas} conta(s) a pagar cancelada(s)` : ""}.`;
   });
 }

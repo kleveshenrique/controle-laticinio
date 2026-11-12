@@ -144,7 +144,7 @@ export function LancamentoForm({ suppliers, categories, paymentMethods }: { supp
             r.category.trim() && inv.category ? `categoria "${r.category.trim()}"` : "",
           ].filter(Boolean);
           const n = numParcelas(r.qtdParcelas);
-          const hint = `Preencha descrição, fornecedor, categoria, forma de pagamento${pix ? ", chave Pix" : ""}, valor e vencimento${n > 1 ? " de cada parcela" : ""} para adicionar PDFs.`;          return (
+          const hint = `Preencha descrição, fornecedor, categoria, forma de pagamento${pix ? ", chave Pix" : ""}, valor e vencimento${n > 1 ? " de cada parcela" : ""} para adicionar anexos.`;          return (
             <div key={i} className={`space-y-2 ${i > 0 ? "border-t border-line pt-3" : ""}`}>
               <div className={grid}>
                 <input className="input" placeholder="Descrição" value={r.description} onChange={(e) => set(i, "description", e.target.value)} />
@@ -203,10 +203,10 @@ export function LancamentoForm({ suppliers, categories, paymentMethods }: { supp
                 onChange={(e) => set(i, "notes", e.target.value)}
               />
               <div className="grid gap-3 md:grid-cols-3">
-                <PdfPicker label="Pedido" buttonLabel="Pedido PDF" files={r.pedido} onChange={(f) => set(i, "pedido", f)} disabled={semDados} disabledHint={hint} />
-                <PdfPicker label="Nota fiscal" buttonLabel="Nota fiscal PDF" files={r.notas} onChange={(f) => set(i, "notas", f)} disabled={semDados} disabledHint={hint} />
+                <PdfPicker label="Pedido" buttonLabel="Pedido" files={r.pedido} onChange={(f) => set(i, "pedido", f)} disabled={semDados} disabledHint={hint} />
+                <PdfPicker label="Nota fiscal" buttonLabel="Nota fiscal" files={r.notas} onChange={(f) => set(i, "notas", f)} disabled={semDados} disabledHint={hint} />
                 <div>
-                  <PdfPicker label="Boletos" buttonLabel="Boleto PDF" files={r.boletos} onChange={(f) => set(i, "boletos", f)} disabled={semDados} disabledHint={hint} limite={n} />
+                  <PdfPicker label="Boletos" buttonLabel="Boleto" files={r.boletos} onChange={(f) => set(i, "boletos", f)} disabled={semDados} disabledHint={hint} limite={n} />
                   {inv.boletos && (
                     <p className="mt-1 text-xs text-red-700">
                       São {r.boletos.length} boletos para {n} parcela(s): no máximo um boleto por parcela. Remova {r.boletos.length - n} boleto(s) ou aumente as parcelas.

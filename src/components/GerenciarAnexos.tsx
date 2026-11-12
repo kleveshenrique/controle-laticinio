@@ -86,7 +86,7 @@ export function GerenciarAnexos({
               </div>
 
               <AnexosEditor
-                tipos={["PEDIDO", "NOTA_FISCAL", "BOLETO"]}
+                tipos={status === "PAGA" ? ["PEDIDO", "NOTA_FISCAL", "BOLETO", "COMPROVANTE"] : ["PEDIDO", "NOTA_FISCAL", "BOLETO"]}
                 limites={{ BOLETO: 1 }}
                 anexos={anexos}
                 novos={novos}

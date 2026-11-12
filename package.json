@@ -11,6 +11,7 @@
     "db:seed": "prisma db seed",
     "db:reset": "tsx --env-file=.env scripts/resetar-banco.ts",
     "db:categorias": "tsx --env-file=.env scripts/cadastrar-categorias.ts",
+    "db:converter-ordens": "tsx --env-file=.env scripts/converter-contas-em-ordens.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {

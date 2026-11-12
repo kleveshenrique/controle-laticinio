@@ -9,13 +9,14 @@ const PdfIcon = () => (
   </svg>
 );
 
-/** PDFs (pedido, nota fiscal e boletos) de uma conta, como botões que abrem o arquivo em nova aba. */
+/** Anexos (pedido, nota fiscal, boletos e comprovante de pagamento) de uma conta, como botões que abrem o arquivo em nova aba. */
 export function Anexos({ anexos, className = "mt-1.5" }: { anexos: Anexo[]; className?: string }) {
   if (!anexos.length) return null;
   const grupos: [string, Anexo[]][] = [
     ["Pedido", anexos.filter((a) => a.kind === "PEDIDO")],
     ["Nota fiscal", anexos.filter((a) => a.kind === "NOTA_FISCAL")],
     ["Boleto", anexos.filter((a) => a.kind === "BOLETO")],
+    ["Comprovante", anexos.filter((a) => a.kind === "COMPROVANTE")],
   ];
   return (
     <div className={`${className} flex flex-wrap gap-1.5`}>

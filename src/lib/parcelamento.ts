@@ -1,3 +1,4 @@
+import type { TipoAnexo } from "@/lib/anexos";
 import { prisma } from "@/lib/db";
 
 /**
@@ -11,7 +12,7 @@ export async function codigosParcelamento(contas: { parcelamentoId: string | nul
   return new Map(originais.map((o) => [o.id, o.code]));
 }
 
-type AnexoLista = { id: string; kind: "PEDIDO" | "NOTA_FISCAL" | "BOLETO"; fileName: string };
+type AnexoLista = { id: string; kind: TipoAnexo; fileName: string };
 
 /**
  * A nota fiscal é anexada só na 1ª parcela (a conta original), mas aparece em todas as parcelas da conta.
