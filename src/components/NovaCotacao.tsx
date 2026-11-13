@@ -33,6 +33,7 @@ export function NovaCotacao({
   formas,
   cotacao,
   onEnviar,
+  volta,
 }: {
   purchaseOrderId: string;
   fornecedores: string[];
@@ -40,6 +41,8 @@ export function NovaCotacao({
   cotacao?: CotacaoInicial;
   /** Chamado ao enviar (ex.: fechar o modal de edição). */
   onEnviar?: () => void;
+  /** Tela para onde voltar depois de incluir (ex.: "/ordens?status=APROVADA"); sem ela, a tela da ordem. */
+  volta?: string;
 }) {
   const [supplier, setSupplier] = useState(cotacao?.supplier ?? "");
   const [paymentMethod, setPaymentMethod] = useState(cotacao?.paymentMethod ?? "");
@@ -78,6 +81,7 @@ export function NovaCotacao({
         if (!valido) return;
         const fd = new FormData();
         fd.append("purchaseOrderId", purchaseOrderId);
+        if (volta) fd.append("volta", volta);
         if (cotacao) fd.append("id", cotacao.id);
         remover.forEach((r) => fd.append("remover", r));
         fd.append("supplier", supplier.trim());

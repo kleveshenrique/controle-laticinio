@@ -1,6 +1,7 @@
 import { Observacoes } from "@/components/Observacoes";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { can, requireUser } from "@/lib/auth";
 import { podeVerAba, podeVerTela, telaInicial } from "@/lib/telas";
@@ -25,7 +26,7 @@ export default async function Painel() {
   const inicioMes = new Date(todayISO().slice(0, 7) + "-01T00:00:00-03:00");
   const abertas = { in: ["PENDENTE", "APROVADA"] as ("PENDENTE" | "APROVADA")[] };
 
-  const [pendentes, aprovadas, rejeitadas, vencidas, pagasMes, caixas, proximas] = await Promise.all([
+  const [pendentes, aprovadas, rejeitadas, vencidas, pagasMes, caixas, proximas, orcamentos, ordensPendentes] = await Promise.all([
     prisma.account.aggregate({ where: { status: "PENDENTE" }, _sum: { amount: true }, _count: true }),
     prisma.account.aggregate({ where: { status: "APROVADA" }, _sum: { amount: true }, _count: true }),
     prisma.account.aggregate({ where: { status: "REJEITADA" }, _sum: { amount: true }, _count: true }),
@@ -38,28 +39,84 @@ export default async function Painel() {
       take: 8,
       include: { supplier: true },
     }),
+    // Contados por ordem de compra (uma linha por ordem em Aprovar → Orçamentos).
+    prisma.purchaseOrder.count({ where: { status: "APROVADA", quotes: { some: { status: "PENDENTE" } } } }),
+    // Ordens de compra aguardando aprovação.
+    prisma.purchaseOrder.count({ where: { status: "PENDENTE" } }),
   ]);
 
-  const cards = [
-    { label: "Aprovar", v: pendentes, aba: "PENDENTE", href: "/contas?status=PENDENTE", pill: STATUS.PENDENTE.cls },
-    { label: "Aprovadas", v: aprovadas, aba: "APROVADA", href: "/contas?status=APROVADA", pill: STATUS.APROVADA.cls },
-    { label: "Rejeitadas", v: rejeitadas, aba: "REJEITADA", href: "/contas?status=REJEITADA", pill: STATUS.REJEITADA.cls, alert: rejeitadas._count > 0 },
-    { label: "Vencidas", v: vencidas, aba: "VENCIDAS", href: "/contas?vencidas=1", pill: VENCIDAS_CLS, alert: vencidas._count > 0 },
-    ...(pagasMes ? [{ label: "Pagas no mês", v: pagasMes, aba: "PAGA", href: "/contas?status=PAGA", pill: STATUS.PAGA.cls }] : []),
-  ];
-  // O card só é clicável se a aba correspondente da tela Contas estiver liberada.
+  // Orçamentos (cotações aprovadas) que geraram as contas de cada card: ordens de compra distintas entre essas contas
+  // (uma cotação parcelada gera várias contas, mas conta como um orçamento). Só para quem vê Ordens de compra.
+  const verOrcamentos = podeVerTela(user, "ORDENS_COMPRA");
+  const deOrcamento = (where: Prisma.AccountWhereInput) =>
+    verOrcamentos
+      ? prisma.account.findMany({ where: { ...where, purchaseOrderId: { not: null } }, distinct: ["purchaseOrderId"], select: { purchaseOrderId: true } }).then((l) => l.length)
+      : Promise.resolve(0);
+  const ordens = (status: "APROVADA" | "REJEITADA") => (verOrcamentos ? prisma.purchaseOrder.count({ where: { status } }) : Promise.resolve(0));
+  const [orcAprovadas, orcRejeitadas, orcVencidas, orcPagas, ordensAprovadas, ordensRejeitadas] = await Promise.all([
+    deOrcamento({ status: "APROVADA" }),
+    deOrcamento({ status: "REJEITADA" }),
+    deOrcamento({ status: abertas, dueDate: { lt: hoje } }),
+    admin ? deOrcamento({ status: "PAGA", paidAt: { gte: inicioMes } }) : Promise.resolve(0),
+    // Ordens de compra aprovadas (em cotação) e rejeitadas. Não existem ordens vencidas ou pagas.
+    ordens("APROVADA"),
+    ordens("REJEITADA"),
+  ]);
+
+  // O card de conta só é clicável se a aba correspondente da tela Contas estiver liberada.
   const linkCard = (aba: string, href: string) => (podeVerAba(user, aba) ? href : null);
+  // Quantidade em destaque (contas + ordens de compra, ex.: "12 aprovadas") e, embaixo, o detalhamento:
+  // contas, ordens de compra (só em Aprovadas/Rejeitadas), orçamentos que geraram as contas e o valor total das contas.
+  const contas = (label: string, v: typeof pendentes, orc: number, aba: string, href: string, pill: string, alert = false, ordensQtd?: number) => {
+    const total = v._count + (ordensQtd ?? 0);
+    return {
+      label, pill, alert, href: linkCard(aba, href),
+      valor: `${total} ${total === 1 ? label.toLowerCase().replace(/s(?=$| )/, "") : label.toLowerCase()}`,
+      sub: [
+        `${v._count} conta(s)`,
+        ...(verOrcamentos && ordensQtd !== undefined ? [`${ordensQtd} ordem(ns) de compra`] : []),
+        ...(verOrcamentos ? [`${orc} orçamento(s)`] : []),
+        brl(v._sum.amount),
+      ].join(" · "),
+    };
+  };
+
+  // "Aprovar": contas + ordens de compra aguardando aprovação + orçamentos (cotações) em análise.
+  const cards = [
+    {
+      label: "Aprovar",
+      pill: STATUS.PENDENTE.cls,
+      alert: false,
+      // Vai para Ordens de compra → Aprovar (ordens, orçamentos e contas); sem acesso a Ordens, vai para Contas → Aprovar.
+      href: verOrcamentos ? "/ordens?status=PENDENTE" : podeVerAba(user, "PENDENTE") ? "/contas?status=PENDENTE" : null,
+      // Quantidade total para aprovar (contas + orçamentos), com o detalhamento embaixo.
+      valor: `${pendentes._count + (verOrcamentos ? ordensPendentes + orcamentos : 0)} para aprovar`,
+      sub: verOrcamentos ? `${pendentes._count} conta(s) · ${ordensPendentes} ordem(ns) de compra · ${orcamentos} orçamento(s)` : `${pendentes._count} conta(s) · ${brl(pendentes._sum.amount)}`,
+    },
+    // Aprovadas: vai para Ordens de compra → Em cotação (ordens aprovadas); sem acesso a Ordens, vai para Contas → Aprovadas.
+    {
+      ...contas("Aprovadas", aprovadas, orcAprovadas, "APROVADA", "/contas?status=APROVADA", STATUS.APROVADA.cls, false, ordensAprovadas),
+      ...(verOrcamentos ? { href: "/ordens?status=APROVADA" } : {}),
+    },
+    // Rejeitadas: vai para Ordens de compra → Rejeitadas; sem acesso a Ordens, vai para Contas → Rejeitadas.
+    {
+      ...contas("Rejeitadas", rejeitadas, orcRejeitadas, "REJEITADA", "/contas?status=REJEITADA", STATUS.REJEITADA.cls, rejeitadas._count + ordensRejeitadas > 0, ordensRejeitadas),
+      ...(verOrcamentos ? { href: "/ordens?status=REJEITADA" } : {}),
+    },
+    contas("Vencidas", vencidas, orcVencidas, "VENCIDAS", "/contas?vencidas=1", VENCIDAS_CLS, vencidas._count > 0),
+    ...(pagasMes ? [contas("Pagas no mês", pagasMes, orcPagas, "PAGA", "/contas?status=PAGA", STATUS.PAGA.cls)] : []),
+  ];
 
   return (
     <div className="space-y-6">
       <div className={`grid gap-3 sm:grid-cols-2 ${admin ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
         {cards.map((c) => {
-          const href = linkCard(c.aba, c.href);
+          const href = c.href;
           const conteudo = (
             <>
               <span className={`inline-block whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${c.pill}`}>{c.label}</span>
-              <div className={`mt-2 text-xl font-semibold ${c.alert ? "text-red-700" : "text-ink"}`}>{brl(c.v._sum.amount)}</div>
-              <div className="text-xs opacity-80">{c.v._count} conta(s)</div>
+              <div className={`mt-2 text-xl font-semibold ${c.alert ? "text-red-700" : "text-ink"}`}>{c.valor}</div>
+              <div className="text-xs opacity-80">{c.sub}</div>
             </>
           );
           return href ? (

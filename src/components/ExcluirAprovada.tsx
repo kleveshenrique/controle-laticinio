@@ -13,6 +13,7 @@ export function ExcluirAprovada({
   descricao,
   temBoleto,
   apagaNotaFiscal = false,
+  voltaTela,
 }: {
   id: string;
   code: number;
@@ -20,6 +21,8 @@ export function ExcluirAprovada({
   temBoleto: boolean;
   /** Última parcela da conta: a nota fiscal também é apagada do armazenamento. */
   apagaNotaFiscal?: boolean;
+  /** Tela para onde voltar depois de excluir (ex.: "/ordens?status=APROVADA"). */
+  voltaTela?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -69,6 +72,7 @@ export function ExcluirAprovada({
                   onClick={() => {
                     const fd = new FormData();
                     fd.append("id", id);
+                    if (voltaTela) fd.append("voltaTela", voltaTela);
                     setOpen(false);
                     acoes.executar(`excluir-${id}`, () => excluirAprovada(fd));
                   }}

@@ -216,7 +216,10 @@ async function lerPdfs(formData: FormData, field: string, kind: AttachmentKind, 
 }
 
 export async function lancarContas(formData: FormData) {
-  await run("/contas/nova", "/contas/nova", async () => {
+  // Volta para a tela de onde o modal "Lançar contas" foi aberto (Ordens de compra ou Contas).
+  const v = String(formData.get("volta") ?? "");
+  const volta = v === "/ordens" || v.startsWith("/ordens?") || v === "/contas" || v.startsWith("/contas?") ? v : "/ordens";
+  await run(volta, volta, async () => {
     const user = await requirePermission("LANCAR");
     let raw: unknown;
     try {
@@ -291,7 +294,8 @@ export async function lancarContas(formData: FormData) {
 }
 
 export async function cancelar(formData: FormData) {
-  await run("/contas", "/contas", async () => {
+  const volta = telaAprovacao(formData, "/contas", "voltaTela");
+  await run(volta, volta, async () => {
     const user = await requireUser();
     const acc = await prisma.account.findUnique({ where: { id: String(formData.get("id")) } });
     if (!acc) throw new UserError("Conta não encontrada.");
@@ -311,7 +315,8 @@ export async function cancelar(formData: FormData) {
  * Quem lança, quem aprova ou o administrador.
  */
 export async function excluirAprovada(formData: FormData) {
-  await run("/contas?status=APROVADA", "/contas?status=APROVADA", async () => {
+  const volta = telaAprovacao(formData, "/contas?status=APROVADA", "voltaTela");
+  await run(volta, volta, async () => {
     const user = await requireUser();
     const acc = await prisma.account.findUnique({
       where: { id: String(formData.get("id")) },
@@ -356,7 +361,8 @@ export async function excluirAprovada(formData: FormData) {
 
 /** Cancela uma conta pendente na tela de aprovações, exigindo motivo. */
 export async function cancelarAprovacao(formData: FormData) {
-  await run("/contas?status=PENDENTE", "/contas?status=PENDENTE", async () => {
+  const volta = telaAprovacao(formData, "/contas?status=PENDENTE", "voltaTela");
+  await run(volta, volta, async () => {
     const user = await requirePermission("APROVAR");
     const motivo = String(formData.get("motivo") ?? "").trim();
     if (motivo.length < 3) throw new UserError("Informe o motivo do cancelamento.");
@@ -414,7 +420,7 @@ async function lerAlteracoesAnexos(
  */
 export async function editarConta(formData: FormData) {
   const v = formData.get("volta");
-  const volta = v === "REJEITADA" ? "/contas?status=REJEITADA" : v === "APROVADA" ? "/contas?status=APROVADA" : "/contas?status=PENDENTE";
+  const volta = telaAprovacao(formData, v === "REJEITADA" ? "/contas?status=REJEITADA" : v === "APROVADA" ? "/contas?status=APROVADA" : "/contas?status=PENDENTE", "voltaTela");
   await run(volta, volta, async () => {
     const user = await requireUser();
     const acc = await prisma.account.findUnique({
@@ -551,7 +557,7 @@ export async function editarConta(formData: FormData) {
  */
 export async function gerenciarAnexos(formData: FormData) {
   const v = formData.get("volta");
-  const volta = v === "PAGAMENTOS" ? "/pagamentos" : v === "PAGA" ? "/contas?status=PAGA" : "/contas?status=APROVADA";
+  const volta = telaAprovacao(formData, v === "PAGAMENTOS" ? "/pagamentos" : v === "PAGA" ? "/contas?status=PAGA" : "/contas?status=APROVADA", "voltaTela");
   await run(volta, volta, async () => {
     // Quem lança ou quem paga pode incluir nota fiscal e boletos.
     const user = await requireUser();
@@ -599,7 +605,8 @@ export async function gerenciarAnexos(formData: FormData) {
 /* ---------- 2. validar e autorizar ---------- */
 
 export async function aprovar(formData: FormData) {
-  await run("/contas?status=PENDENTE", "/contas?status=PENDENTE", async () => {
+  const volta = telaAprovacao(formData, "/contas?status=PENDENTE", "voltaTela");
+  await run(volta, volta, async () => {
     const user = await requirePermission("APROVAR");
     const accounts = await prisma.account.findMany({
       where: { id: { in: ids(formData) }, status: "PENDENTE" },
@@ -684,7 +691,8 @@ export async function aprovar(formData: FormData) {
 }
 
 export async function rejeitar(formData: FormData) {
-  await run("/contas?status=PENDENTE", "/contas?status=PENDENTE", async () => {
+  const volta = telaAprovacao(formData, "/contas?status=PENDENTE", "voltaTela");
+  await run(volta, volta, async () => {
     const user = await requirePermission("APROVAR");
     const motivo = String(formData.get("motivo") ?? "").trim();
     if (motivo.length < 3) throw new UserError("Informe o motivo da rejeição.");
@@ -1068,6 +1076,22 @@ export async function criarOrdemCompra(formData: FormData) {
 }
 
 /** Busca a ordem e confere se o usuário pode aprová-la/decidir a cotação (quem criou não aprova, exceto o administrador). */
+/**
+ * Telas que mostram contas fora da tela Contas (abas Aprovar de Contas e de Ordens; Em cotação e Rejeitadas de Ordens):
+ * quem age nelas continua nelas.
+ */
+const TELAS_APROVACAO = ["/contas?status=PENDENTE", "/ordens?status=PENDENTE", "/ordens?status=APROVADA", "/ordens?status=REJEITADA"];
+/** Tela de aprovação pedida no campo `campo` do formulário, ou `padrao` se não for uma delas. */
+function telaAprovacao(formData: FormData, padrao: string, campo = "volta") {
+  const v = String(formData.get(campo) ?? "");
+  return TELAS_APROVACAO.includes(v) ? v : padrao;
+}
+
+/** Aprovando/rejeitando por uma tela de aprovação, continua nela; senão, fica na ordem. */
+function voltaAprovacao(formData: FormData, id: string) {
+  return telaAprovacao(formData, `/ordens/${id}`);
+}
+
 async function ordemParaAprovar(id: string, user: { id: string; permissions: string[] }) {
   const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
   if (!oc) throw new UserError("Ordem de compra não encontrada.");
@@ -1077,7 +1101,8 @@ async function ordemParaAprovar(id: string, user: { id: string; permissions: str
 
 export async function aprovarOrdemCompra(formData: FormData) {
   const id = String(formData.get("id") ?? "");
-  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+  const volta = voltaAprovacao(formData, id);
+  await run(volta, volta, async () => {
     const user = await requirePermission("APROVAR");
     const oc = await ordemParaAprovar(id, user);
     const res = await prisma.purchaseOrder.updateMany({
@@ -1091,7 +1116,8 @@ export async function aprovarOrdemCompra(formData: FormData) {
 
 export async function rejeitarOrdemCompra(formData: FormData) {
   const id = String(formData.get("id") ?? "");
-  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+  const volta = voltaAprovacao(formData, id);
+  await run(volta, volta, async () => {
     const user = await requirePermission("APROVAR");
     const motivo = String(formData.get("motivo") ?? "").trim();
     if (motivo.length < 3) throw new UserError("Informe o motivo da rejeição.");
@@ -1108,23 +1134,6 @@ export async function rejeitarOrdemCompra(formData: FormData) {
       await tx.purchaseOrderRejection.create({ data: { purchaseOrderId: id, userId: user.id, reason, createdAt: agora } });
     });
     return `Ordem de compra #${oc.code} rejeitada.`;
-  });
-}
-
-/** Cancela uma ordem ainda sem cotação aprovada. Só quem criou ou o administrador. */
-export async function cancelarOrdemCompra(formData: FormData) {
-  const id = String(formData.get("id") ?? "");
-  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
-    const user = await requireUser();
-    const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
-    if (!oc) throw new UserError("Ordem de compra não encontrada.");
-    if (oc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem criou (ou o administrador) pode cancelar a ordem de compra.");
-    const res = await prisma.purchaseOrder.updateMany({
-      where: { id, status: { in: ["PENDENTE", "APROVADA", "REJEITADA"] } },
-      data: { status: "CANCELADA", canceledAt: new Date() },
-    });
-    if (!res.count) throw new UserError(`Ordem de compra #${oc.code} não pode mais ser cancelada.`);
-    return `Ordem de compra #${oc.code} cancelada.`;
   });
 }
 
@@ -1194,7 +1203,9 @@ const registroAnexoCotacao = ({ fileName, size, contentType, storageKey }: { fil
 /** Inclui uma cotação (fornecedor, valor, vencimento/parcelas, forma de pagamento e proposta anexada) numa ordem aprovada. */
 export async function adicionarCotacao(formData: FormData) {
   const id = String(formData.get("purchaseOrderId") ?? "");
-  await run(`/ordens/${id}`, `/ordens/${id}`, async () => {
+  // Incluída pela aba Em cotação (modal), continua nela; senão, fica na ordem.
+  const volta = telaAprovacao(formData, `/ordens/${id}`);
+  await run(volta, volta, async () => {
     const user = await requirePermission("LANCAR");
     const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
     if (!oc) throw new UserError("Ordem de compra não encontrada.");
@@ -1216,7 +1227,8 @@ export async function editarCotacao(formData: FormData) {
     where: { id: String(formData.get("id") ?? "") },
     include: { purchaseOrder: true, attachments: { select: { id: true, storageKey: true } } },
   });
-  const volta = quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens";
+  // Editada por uma tela de aprovação/cotação (Aprovar, Em cotação), continua nela; senão, fica na ordem.
+  const volta = telaAprovacao(formData, quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens");
   await run(volta, volta, async () => {
     const user = await requirePermission("LANCAR");
     if (!quote) throw new UserError("Cotação não encontrada.");
@@ -1272,8 +1284,11 @@ export async function aprovarCotacao(formData: FormData) {
     where: { id: String(formData.get("id") ?? "") },
     include: { attachments: true },
   });
-  const volta = quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens";
-  await run(volta, volta, async () => {
+  // Aprovando por uma tela de aprovação (Contas ou Ordens → Aprovar), continua nela (com erro ou sucesso).
+  // Pela tela da ordem: com sucesso vai para Ordens de compra → Concluídas; com erro, fica na ordem.
+  const daAprovacao = TELAS_APROVACAO.includes(String(formData.get("volta") ?? ""));
+  const volta = daAprovacao ? String(formData.get("volta")) : quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens";
+  await run(volta, daAprovacao ? volta : "/ordens?status=CONCLUIDA", async () => {
     const user = await requirePermission("APROVAR");
     if (!quote) throw new UserError("Cotação não encontrada.");
     const oc = await ordemParaAprovar(quote.purchaseOrderId, user);
@@ -1340,6 +1355,41 @@ export async function aprovarCotacao(formData: FormData) {
   });
 }
 
+/**
+ * Cancela a aprovação de uma cotação, para poder aprovar outra: a cotação e as descartadas voltam a "Em análise",
+ * a ordem volta para "Em cotação" e as contas geradas são canceladas (com o motivo). Se alguma conta já foi paga,
+ * não é possível cancelar. Mesma regra de quem aprova a cotação.
+ */
+export async function cancelarAprovacaoCotacao(formData: FormData) {
+  const quote = await prisma.quote.findUnique({ where: { id: String(formData.get("id") ?? "") } });
+  const volta = quote ? `/ordens/${quote.purchaseOrderId}` : "/ordens";
+  await run(volta, volta, async () => {
+    const user = await requirePermission("APROVAR");
+    if (!quote) throw new UserError("Cotação não encontrada.");
+    const motivo = String(formData.get("motivo") ?? "").trim();
+    if (motivo.length < 3) throw new UserError("Informe o motivo do cancelamento da aprovação.");
+    const oc = await ordemParaAprovar(quote.purchaseOrderId, user);
+    if (oc.status !== "CONCLUIDA" || quote.status !== "APROVADA") throw new UserError(`A cotação da ordem de compra #${oc.code} não está aprovada.`);
+
+    let canceladas = 0;
+    await prisma.$transaction(async (tx) => {
+      const pagas = await tx.account.findMany({ where: { purchaseOrderId: oc.id, status: "PAGA" }, select: { code: true } });
+      if (pagas.length)
+        throw new UserError(`A ordem de compra #${oc.code} tem conta(s) já paga(s) (${pagas.map((p) => `#${p.code}`).join(", ")}); a aprovação não pode ser cancelada.`);
+      const abriu = await tx.purchaseOrder.updateMany({ where: { id: oc.id, status: "CONCLUIDA" }, data: { status: "APROVADA" } });
+      const voltou = await tx.quote.updateMany({ where: { id: quote.id, status: "APROVADA" }, data: { status: "PENDENTE", approvedById: null, approvedAt: null } });
+      if (!abriu.count || !voltou.count) throw new UserError("A ordem de compra foi alterada por outra pessoa. Tente novamente.");
+      await tx.quote.updateMany({ where: { purchaseOrderId: oc.id, status: "DESCARTADA" }, data: { status: "PENDENTE" } });
+      const contas = await tx.account.updateMany({
+        where: { purchaseOrderId: oc.id, status: { in: ["PENDENTE", "APROVADA", "REJEITADA"] } },
+        data: { status: "CANCELADA", canceledById: user.id, canceledAt: new Date(), cancelReason: `Aprovação da cotação cancelada: ${motivo}` },
+      });
+      canceladas = contas.count;
+    });
+    return `Aprovação cancelada: ordem de compra #${oc.code} voltou para cotação${canceladas ? ` e ${canceladas} conta(s) a pagar cancelada(s)` : ""}.`;
+  });
+}
+
 /** Desfaz a rejeição de uma ordem de compra: ela volta a aguardar aprovação. Mesma regra de quem aprova. */
 export async function cancelarRejeicaoOrdem(formData: FormData) {
   const id = String(formData.get("id") ?? "");
@@ -1361,18 +1411,18 @@ export async function cancelarRejeicaoOrdem(formData: FormData) {
 }
 
 /**
- * Altera descrição, categoria e observações de uma ordem de compra concluída. Só quem criou ou o administrador.
- * As contas geradas que ainda não foram pagas acompanham a nova descrição e categoria.
+ * Altera descrição, categoria e observações de uma ordem de compra (qualquer situação, menos cancelada).
+ * Só quem criou ou o administrador. As contas geradas que ainda não foram pagas acompanham a nova descrição e categoria.
  */
 export async function editarOrdemCompra(formData: FormData) {
   const id = String(formData.get("id") ?? "");
-  const volta = String(formData.get("volta") ?? "") === "lista" ? "/ordens?status=CONCLUIDA" : `/ordens/${id}`;
+  const volta = voltaOrdem(formData, id);
   await run(volta, volta, async () => {
     const user = await requireUser();
     const oc = await prisma.purchaseOrder.findUnique({ where: { id }, include: { category: true } });
     if (!oc) throw new UserError("Ordem de compra não encontrada.");
     if (oc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem criou (ou o administrador) pode alterar a ordem de compra.");
-    if (oc.status !== "CONCLUIDA") throw new UserError(`Ordem de compra #${oc.code} não está concluída.`);
+    if (oc.status === "CANCELADA") throw new UserError(`Ordem de compra #${oc.code} está cancelada e não pode ser alterada.`);
     const parsed = ordemSchema.safeParse({
       description: formData.get("description") ?? "",
       category: formData.get("category") ?? "",
@@ -1384,8 +1434,20 @@ export async function editarOrdemCompra(formData: FormData) {
     const categoryId = mudouCat ? (await buscarCadastros([], [r.category])).categorias.get(r.category)!.id : oc.categoryId;
     if (r.description === oc.description && categoryId === oc.categoryId && (r.notes || null) === oc.notes) throw new UserError("Nenhuma alteração feita.");
 
+    // Rejeitada ou em cotação: ao ser editada, volta a aguardar aprovação (a rejeição continua no histórico;
+    // as cotações já incluídas ficam guardadas e voltam a aparecer quando a ordem for aprovada de novo).
+    const reenviar = oc.status === "REJEITADA" || oc.status === "APROVADA";
     await prisma.$transaction(async (tx) => {
-      await tx.purchaseOrder.update({ where: { id }, data: { description: r.description, categoryId, notes: r.notes || null } });
+      const res = await tx.purchaseOrder.updateMany({
+        where: { id, status: oc.status },
+        data: {
+          description: r.description,
+          categoryId,
+          notes: r.notes || null,
+          ...(reenviar ? { status: "PENDENTE" as const, reviewedById: null, reviewedAt: null, rejectionReason: null } : {}),
+        },
+      });
+      if (!res.count) throw new UserError("A ordem de compra foi alterada por outra pessoa. Tente novamente.");
       // Contas ainda a pagar: descrição "OC #N — descrição (k/n)" e categoria acompanham a ordem.
       const contas = await tx.account.findMany({ where: { purchaseOrderId: id, status: "APROVADA" }, select: { id: true, description: true } });
       for (const c of contas) {
@@ -1393,22 +1455,39 @@ export async function editarOrdemCompra(formData: FormData) {
         await tx.account.update({ where: { id: c.id }, data: { description: `OC #${oc.code} — ${r.description}${parcela}`, categoryId } });
       }
     });
-    return `Ordem de compra #${oc.code} alterada.`;
+    return reenviar ? `Ordem de compra #${oc.code} alterada e enviada para aprovação novamente.` : `Ordem de compra #${oc.code} alterada.`;
   });
 }
 
+/** Para onde voltar depois de alterar/excluir: a lista de ordens informada pela tela, ou a própria ordem. */
+function voltaOrdem(formData: FormData, id: string) {
+  const v = String(formData.get("volta") ?? "");
+  return v === "/ordens" || v.startsWith("/ordens?") ? v : `/ordens/${id}`;
+}
+
 /**
- * Exclui uma ordem de compra concluída: a ordem fica cancelada (com o histórico) e as contas geradas que ainda
- * não foram pagas são canceladas também. Se alguma conta já foi paga, a ordem não pode ser excluída.
- * Mesma permissão de excluir conta aprovada: quem lança, quem aprova ou o administrador.
+ * Exclui uma ordem de compra: ela fica cancelada (com o histórico).
+ * - Concluída: as contas geradas que ainda não foram pagas são canceladas também; se alguma já foi paga, não exclui.
+ *   Mesma permissão de excluir conta aprovada: quem lança, quem aprova ou o administrador.
+ * - Aguardando aprovação, em cotação ou rejeitada: só quem criou ou o administrador.
  */
 export async function excluirOrdemCompra(formData: FormData) {
   const id = String(formData.get("id") ?? "");
-  await run("/ordens?status=CONCLUIDA", "/ordens?status=CANCELADA", async () => {
+  await run(voltaOrdem(formData, id), "/ordens?status=CANCELADA", async () => {
     const user = await requireUser();
-    if (!can(user, "ADMIN") && !can(user, "LANCAR") && !can(user, "APROVAR")) throw new UserError("Você não tem permissão para excluir ordens de compra.");
     const oc = await prisma.purchaseOrder.findUnique({ where: { id } });
     if (!oc) throw new UserError("Ordem de compra não encontrada.");
+    if (oc.status === "CANCELADA") throw new UserError(`Ordem de compra #${oc.code} já está cancelada.`);
+    if (oc.status !== "CONCLUIDA") {
+      if (oc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem criou (ou o administrador) pode excluir a ordem de compra.");
+      const res = await prisma.purchaseOrder.updateMany({
+        where: { id, status: { in: ["PENDENTE", "APROVADA", "REJEITADA"] } },
+        data: { status: "CANCELADA", canceledAt: new Date() },
+      });
+      if (!res.count) throw new UserError(`Ordem de compra #${oc.code} foi alterada por outra pessoa. Tente novamente.`);
+      return `Ordem de compra #${oc.code} excluída.`;
+    }
+    if (!can(user, "ADMIN") && !can(user, "LANCAR") && !can(user, "APROVAR")) throw new UserError("Você não tem permissão para excluir ordens de compra.");
     let canceladas = 0;
     await prisma.$transaction(async (tx) => {
       const pagas = await tx.account.findMany({ where: { purchaseOrderId: id, status: "PAGA" }, select: { code: true } });

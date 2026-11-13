@@ -86,6 +86,7 @@ export function BotaoAcaoConta({
   className,
   title,
   children,
+  voltaTela,
 }: {
   id: string;
   chave: string;
@@ -93,6 +94,8 @@ export function BotaoAcaoConta({
   className: string;
   title: string;
   children: ReactNode;
+  /** Tela de aprovação para onde voltar (ex.: "/ordens?status=PENDENTE"). */
+  voltaTela?: string;
 }) {
   const { executar } = useAcoesContas();
   return (
@@ -103,6 +106,7 @@ export function BotaoAcaoConta({
       onClick={() => {
         const fd = new FormData();
         fd.append("id", id);
+        if (voltaTela) fd.append("voltaTela", voltaTela);
         executar(chave, () => acao(fd));
       }}
     >

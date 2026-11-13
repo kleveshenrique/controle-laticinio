@@ -13,6 +13,7 @@ export function AcoesAprovacao({
   disabled,
   disabledTitle,
   podeCancelar = true,
+  voltaTela,
 }: {
   id: string;
   code: number;
@@ -20,6 +21,8 @@ export function AcoesAprovacao({
   disabledTitle?: string;
   /** Falso quando a linha já tem o botão Cancelar de quem lançou/administrador. */
   podeCancelar?: boolean;
+  /** Tela de aprovação para onde voltar (ex.: "/ordens?status=PENDENTE"); sem ela, Contas → Aprovar. */
+  voltaTela?: string;
 }) {
   const [modal, setModal] = useState<"rejeitar" | "cancelar" | null>(null);
   const { ocupado, executar } = useAcoesContas();
@@ -29,6 +32,7 @@ export function AcoesAprovacao({
     fd.append("ids", id);
     fd.append("id", id);
     if (motivo) fd.append("motivo", motivo);
+    if (voltaTela) fd.append("voltaTela", voltaTela);
     executar(`${chave}-${id}`, () => action(fd));
   }
 

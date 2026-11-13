@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { can, exigirTela, requireUser } from "@/lib/auth";
 import { SubmitButton } from "@/components/SubmitButton";
-import { CampoBuscaForm } from "@/components/CampoBuscaForm";
+import { CampoCategoria } from "@/components/CampoCategoria";
 import { criarOrdemCompra } from "@/app/actions";
 
 export default async function NovaOrdem() {
@@ -23,13 +23,7 @@ export default async function NovaOrdem() {
         </div>
         <div>
           <label className="label" htmlFor="category">Categoria *</label>
-          <CampoBuscaForm
-            id="category"
-            name="category"
-            placeholder="Buscar categoria"
-            opcoes={categorias.map((c) => c.name)}
-            vazio="Nenhuma categoria ativa encontrada. Cadastre em Categorias."
-          />
+          <CampoCategoria id="category" name="category" opcoes={categorias.map((c) => c.name)} />
         </div>
         <div>
           <label className="label" htmlFor="notes">Observações</label>

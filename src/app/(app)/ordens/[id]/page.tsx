@@ -5,10 +5,10 @@ import { can, exigirTela, requireUser } from "@/lib/auth";
 import { brl, dateBR, dateTimeBR, formaPagamentoTexto, lerParcelas, maskMoney } from "@/lib/format";
 import { historicoOrdem, Selo, STATUS_COTACAO, STATUS_ORDEM } from "@/lib/ordens";
 import { Observacoes } from "@/components/Observacoes";
-import { AcoesCotacao, AcoesOrdem } from "@/components/AcoesOrdem";
+import { AcoesCotacao, AcoesOrdem, CancelarAprovacaoCotacao } from "@/components/AcoesOrdem";
 import { NovaCotacao } from "@/components/NovaCotacao";
 import { EditarCotacao } from "@/components/EditarCotacao";
-import { AcoesOrdemConcluida } from "@/components/AcoesOrdemConcluida";
+import { EditarExcluirOrdem } from "@/components/EditarExcluirOrdem";
 import { StatusBadge } from "@/components/StatusBadge";
 
 /** Detalhe da ordem de compra: aprovação, cotações e contas geradas. */
@@ -45,8 +45,10 @@ export default async function Ordem({ params }: { params: { id: string } }) {
   const dono = admin || oc.createdById === user.id;
   const emCotacao = oc.status === "APROVADA";
 
+  // Editar (e excluir, fora das concluídas): quem criou ou o administrador, enquanto a ordem não estiver cancelada.
+  const editavel = dono && oc.status !== "CANCELADA";
   const categorias =
-    oc.status === "CONCLUIDA" && dono
+    editavel
       ? await prisma.category.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { name: true } }).then((l) => l.map((c) => c.name))
       : [];
   const precisaListas = emCotacao && can(user, "LANCAR");
@@ -94,17 +96,20 @@ export default async function Ordem({ params }: { params: { id: string } }) {
           code={oc.code}
           aprovar={oc.status === "PENDENTE" && aprovador}
           desfazerRejeicao={oc.status === "REJEITADA" && aprovador}
-          cancelar={dono && (oc.status === "PENDENTE" || oc.status === "APROVADA" || oc.status === "REJEITADA")}
         />
-        {oc.status === "CONCLUIDA" && (
-          <AcoesOrdemConcluida
+        {oc.status !== "CONCLUIDA" && (
+        <div className="flex justify-start">
+          <EditarExcluirOrdem
             id={oc.id}
             code={oc.code}
+            concluida={false}
+            reenviar={oc.status === "REJEITADA" || oc.status === "APROVADA"}
             ordem={{ description: oc.description, category: oc.category.name, notes: oc.notes ?? "" }}
             categorias={categorias}
-            alterar={dono}
-            excluir={admin || can(user, "LANCAR") || can(user, "APROVAR")}
+            editar={editavel}
+            excluir={editavel}
           />
+        </div>
         )}
       </section>
 
@@ -153,8 +158,13 @@ export default async function Ordem({ params }: { params: { id: string } }) {
                       </td>
                       <td className="td">
                         {emCotacao && q.status === "PENDENTE" && (
-                          <div className="flex flex-wrap justify-end gap-2">
-                          {can(user, "LANCAR") && (admin || q.createdById === user.id) && (
+                          <AcoesCotacao
+                            id={q.id}
+                            fornecedor={`Cotação ${i + 1} · ${q.supplier.name}`}
+                            valor={brl(q.amount)}
+                            aprovar={aprovador}
+                            excluir={can(user, "LANCAR") && (admin || q.createdById === user.id)}
+                            editar={can(user, "LANCAR") && (admin || q.createdById === user.id) && (
                             <EditarCotacao
                               purchaseOrderId={oc.id}
                               fornecedores={fornecedores}
@@ -171,15 +181,16 @@ export default async function Ordem({ params }: { params: { id: string } }) {
                                 anexos: q.attachments,
                               }}
                             />
-                          )}
-                          <AcoesCotacao
+                            )}
+                          />
+                        )}
+                        {oc.status === "CONCLUIDA" && q.status === "APROVADA" && aprovador && (
+                          <CancelarAprovacaoCotacao
                             id={q.id}
                             fornecedor={`Cotação ${i + 1} · ${q.supplier.name}`}
                             valor={brl(q.amount)}
-                            aprovar={aprovador}
-                            excluir={can(user, "LANCAR") && (admin || q.createdById === user.id)}
+                            bloqueio={oc.accounts.some((a) => a.status === "PAGA") ? "Há conta já paga desta ordem; a cotação não pode ser reaberta." : undefined}
                           />
-                          </div>
                         )}
                       </td>
                     </tr>
@@ -196,7 +207,9 @@ export default async function Ordem({ params }: { params: { id: string } }) {
         <section>
           <h2 className="mb-2 text-sm font-semibold">Incluir cotação</h2>
           <div className="card p-4">
-            <NovaCotacao purchaseOrderId={oc.id} fornecedores={fornecedores} formas={formas} />
+            {/* A chave muda quando entra uma cotação nova: o formulário é recriado e os campos ficam limpos.
+                Se der erro, a lista não muda e o que foi digitado continua no formulário. */}
+            <NovaCotacao key={oc.quotes.map((q) => q.id).join(",")} purchaseOrderId={oc.id} fornecedores={fornecedores} formas={formas} />
           </div>
         </section>
       )}

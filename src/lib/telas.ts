@@ -15,7 +15,6 @@ export const TELAS = [
   { key: "PAINEL", href: "/", label: "Painel", requisito: () => true },
   { key: "CONTAS", href: "/contas", label: "Contas", requisito: () => true },
   { key: "ORDENS_COMPRA", href: "/ordens", label: "Ordens de compra", requisito: (u: Usuario) => tem(u, "LANCAR") || tem(u, "APROVAR") },
-  { key: "LANCAR_CONTAS", href: "/contas/nova", label: "Lançar contas", requisito: (u: Usuario) => tem(u, "LANCAR") },
   { key: "PAGAMENTOS", href: "/pagamentos", label: "Pagamentos", requisito: (u: Usuario) => tem(u, "PAGAR") },
   { key: "CAIXA", href: "/caixa", label: "Caixa", requisito: (u: Usuario) => tem(u, "CAIXA") || tem(u, "PAGAR") },
   { key: "USUARIOS", href: "/usuarios", label: "Usuários", requisito: (u: Usuario) => admin(u) },

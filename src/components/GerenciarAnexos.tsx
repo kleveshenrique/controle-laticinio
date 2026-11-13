@@ -18,6 +18,7 @@ export function GerenciarAnexos({
   anexos,
   admin,
   volta,
+  voltaTela,
   primeiraParcela = true,
 }: {
   /** Conta sem parcelamento ou 1ª parcela: só nela a nota fiscal pode ser anexada. */
@@ -29,6 +30,8 @@ export function GerenciarAnexos({
   admin: boolean;
   /** Tela para onde voltar depois de salvar. Padrão: aba da situação em Contas. */
   volta?: "PAGAMENTOS";
+  /** Tela fora de Contas para onde voltar (ex.: "/ordens?status=APROVADA"). */
+  voltaTela?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -69,6 +72,7 @@ export function GerenciarAnexos({
                 const fd = new FormData();
                 fd.append("id", id);
                 fd.append("volta", volta ?? status);
+                if (voltaTela) fd.append("voltaTela", voltaTela);
                 anexosParaFormData(fd, novos, remover);
                 setOpen(false);
                 acoes.executar(`anexos-${id}`, () => gerenciarAnexos(fd));

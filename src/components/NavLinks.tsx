@@ -12,7 +12,7 @@ export function NavLinks({ items }: { items: { href: string; label: string }[] }
   // Se ainda há botões escondidos à esquerda/direita (só acontece no celular, onde a barra rola).
   const [mais, setMais] = useState({ esquerda: false, direita: false });
 
-  // O item ativo é o de prefixo mais longo que casa com a URL (ex.: /contas/nova ativa "Lançar contas", não "Contas").
+  // O item ativo é o de prefixo mais longo que casa com a URL (ex.: /ordens/nova ativa "Ordens de compra").
   const active = items
     .filter((n) => (n.href === "/" ? pathname === "/" : pathname === n.href || pathname.startsWith(n.href + "/")))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href;

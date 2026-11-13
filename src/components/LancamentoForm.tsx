@@ -48,7 +48,20 @@ const invalidFields = (r: Row, fornecedores: string[], categorias: string[], for
 const isFilled = (r: Row) =>
   Boolean(r.description || r.supplier || r.category || r.paymentMethod || r.amount || r.dueDate || r.notes.trim() || r.pedido.length || r.notas.length || r.boletos.length);
 
-export function LancamentoForm({ suppliers, categories, paymentMethods }: { suppliers: string[]; categories: string[]; paymentMethods: string[] }) {
+/** `volta`: tela para onde voltar depois de lançar (ex.: "/ordens"). `onSucesso`: chamado quando o envio termina sem erro. */
+export function LancamentoForm({
+  suppliers,
+  categories,
+  paymentMethods,
+  volta,
+  onSucesso,
+}: {
+  suppliers: string[];
+  categories: string[];
+  paymentMethods: string[];
+  volta?: string;
+  onSucesso?: () => void;
+}) {
   const [rows, setRows] = useState<Row[]>([empty()]);
   const set = <K extends keyof Row>(i: number, k: K, v: Row[K]) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   const setParcelado = (i: number, k: "amount" | "qtdParcelas", v: string) =>
@@ -93,8 +106,11 @@ export function LancamentoForm({ suppliers, categories, paymentMethods }: { supp
   useEffect(() => {
     if (pending || !enviado.current) return;
     enviado.current = false;
-    if (!searchParams.get("erro")) setRows([empty()]);
-  }, [pending, searchParams]);
+    if (!searchParams.get("erro")) {
+      setRows([empty()]);
+      onSucesso?.();
+    }
+  }, [pending, searchParams, onSucesso]);
 
   return (
     <form
@@ -123,6 +139,7 @@ export function LancamentoForm({ suppliers, categories, paymentMethods }: { supp
           r.notas.forEach((f) => fd.append(`nota_${i}`, f));
           r.boletos.forEach((f) => fd.append(`boleto_${i}`, f));
         });
+        if (volta) fd.set("volta", volta);
         enviado.current = true;
         startTransition(() => lancarContas(fd));
       }}

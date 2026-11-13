@@ -41,6 +41,7 @@ export function EditarConta({
   suppliers,
   categories,
   paymentMethods,
+  voltaTela,
 }: {
   /** APROVADA: edição de uma parcela/conta já aprovada (sem parcelamento nem anexos, que ficam no botão "Anexar"). */
   conta: Conta & { status: "PENDENTE" | "REJEITADA" | "APROVADA" };
@@ -48,6 +49,8 @@ export function EditarConta({
   suppliers: string[];
   categories: string[];
   paymentMethods: string[];
+  /** Tela de aprovação para onde voltar depois de salvar (ex.: "/ordens?status=PENDENTE"). */
+  voltaTela?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -124,6 +127,7 @@ export function EditarConta({
                 const fd = new FormData();
                 fd.append("id", conta.id);
                 fd.append("volta", conta.status);
+                if (voltaTela) fd.append("voltaTela", voltaTela);
                 const { qtdParcelas, parcelas, ...campos } = dados;
                 (Object.keys(campos) as (keyof typeof campos)[]).forEach((k) => fd.append(k, k === "pixKey" && !pix ? "" : campos[k]));
                 if (n > 1) {
