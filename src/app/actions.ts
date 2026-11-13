@@ -1504,3 +1504,32 @@ export async function excluirOrdemCompra(formData: FormData) {
     return `Ordem de compra #${oc.code} excluída${canceladas ? ` e ${canceladas} conta(s) a pagar cancelada(s)` : ""}.`;
   });
 }
+
+/**
+ * Exclui definitivamente uma ordem de compra cancelada (aba Canceladas): some do sistema, com cotações,
+ * rejeições e os anexos das cotações (apagados do S3). Contas geradas por ela continuam existindo, só perdem o vínculo.
+ * Só quem criou ou o administrador.
+ */
+export async function excluirOrdemCanceladaDefinitivo(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  const volta = "/ordens?status=CANCELADA";
+  await run(volta, volta, async () => {
+    const user = await requireUser();
+    const oc = await prisma.purchaseOrder.findUnique({
+      where: { id },
+      include: { quotes: { select: { attachments: { select: { storageKey: true } } } } },
+    });
+    if (!oc) throw new UserError("Ordem de compra não encontrada.");
+    if (oc.status !== "CANCELADA") throw new UserError(`Ordem de compra #${oc.code} não está cancelada.`);
+    if (oc.createdById !== user.id && !can(user, "ADMIN")) throw new UserError("Só quem criou (ou o administrador) pode excluir a ordem de compra.");
+    await prisma.$transaction(async (tx) => {
+      await tx.account.updateMany({ where: { purchaseOrderId: id }, data: { purchaseOrderId: null } });
+      // Cotações, anexos das cotações e rejeições saem junto (onDelete: Cascade).
+      const res = await tx.purchaseOrder.deleteMany({ where: { id, status: "CANCELADA" } });
+      if (!res.count) throw new UserError(`Ordem de compra #${oc.code} foi alterada por outra pessoa. Tente novamente.`);
+      // Por último: exclui no S3 e só então a transação confirma a exclusão no banco.
+      await excluirDoS3(oc.quotes.flatMap((q) => q.attachments.map((a) => a.storageKey)));
+    });
+    return `Ordem de compra #${oc.code} excluída definitivamente.`;
+  });
+}

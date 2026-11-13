@@ -131,7 +131,7 @@ export function MenuUsuario({ nome, email, fotoUrl }: { nome: string; email: str
           >
             Alterar senha
           </button>
-          <form action={logout} className="border-t border-line">
+          <form action={logout} onSubmit={() => localStorage.clear()} className="border-t border-line">
             <button role="menuitem" className={`${item} text-red-700`}>Sair</button>
           </form>
         </div>

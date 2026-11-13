@@ -5,6 +5,7 @@ import { brl, dateTimeBR } from "@/lib/format";
 import { AbaAcao, AcoesContasProvider } from "@/components/AcoesContas";
 import { AcoesOrdem, CancelarAprovacaoCotacao } from "@/components/AcoesOrdem";
 import { EditarExcluirOrdem } from "@/components/EditarExcluirOrdem";
+import { ExcluirOrdemCancelada } from "@/components/ExcluirOrdemCancelada";
 import { historicoOrdem, Selo, STATUS_ORDEM, type StatusOrdem } from "@/lib/ordens";
 import { Observacoes } from "@/components/Observacoes";
 import { SecoesAprovacaoOrdens } from "@/components/SecoesAprovacaoOrdens";
@@ -183,6 +184,8 @@ export default async function Ordens({ searchParams }: { searchParams: { status?
                         <AcoesOrdem id={o.id} code={o.code} aprovar={false} desfazerRejeicao compacto />
                       ) : o.status === "APROVADA" ? (
                         <Link href={`/ordens/${o.id}`} className="btn px-2 py-0.5 text-xs">Cotações</Link>
+                      ) : o.status === "CANCELADA" && (admin || o.createdById === user.id) ? (
+                        <ExcluirOrdemCancelada id={o.id} code={o.code} descricao={o.description} />
                       ) : null}
                       {o.status === "CONCLUIDA" ? (
                         aprovada && can(user, "APROVAR") && (admin || o.createdById !== user.id) && (

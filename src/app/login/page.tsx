@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { login } from "@/app/actions";
+import { FormLogin } from "@/components/FormLogin";
 import { getUser } from "@/lib/auth";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CampoSenha } from "@/components/CampoSenha";
@@ -74,7 +74,7 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
             </div>
           )}
 
-          <form action={login} className="card space-y-4 p-6 shadow-sm">
+          <FormLogin erro={erro} className="card space-y-4 p-6 shadow-sm">
             <div>
               <label className="label" htmlFor="nome">Usuário</label>
               <input
@@ -95,7 +95,7 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
               <CampoSenha id="password" name="password" autoComplete="current-password" />
             </div>
             <SubmitButton className="btn w-full border-blue-700 bg-blue-700 py-2 text-white hover:bg-blue-900 focus-visible:outline-blue-600" pendingText="Entrando…">Entrar</SubmitButton>
-          </form>
+          </FormLogin>
 
           <p className="mt-6 text-center text-xs text-muted">Esqueceu a senha? Fale com o administrador do sistema.</p>
         </div>

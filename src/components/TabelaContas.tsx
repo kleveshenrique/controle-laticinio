@@ -4,7 +4,7 @@ import { SeloParcelamento } from "@/components/SeloParcelamento";
 import { codigosParcelamento, comNotasDaPrimeiraParcela, parcelasAtivas } from "@/lib/parcelamento";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/auth";
-import { brl, dateBR, formaPagamentoTexto, lerParcelas } from "@/lib/format";
+import { brl, dateBR, dateTimeBR, formaPagamentoTexto, lerParcelas } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Anexos } from "@/components/Anexos";
 import { GerenciarAnexos } from "@/components/GerenciarAnexos";
@@ -35,6 +35,9 @@ export async function TabelaContas({ user, where, titulo, voltaTela }: { user: U
   // Editar/excluir conta aprovada: quem lança, quem aprova ou o administrador (não só quem lançou).
   const editaAprovada = admin || can(user, "LANCAR") || aprovador;
   const total = contas.reduce((s, a) => s + Number(a.amount), 0);
+  // Colunas do pagamento (data, quem pagou e caixa): só quando a lista tem conta paga.
+  const comPagamento = contas.some((a) => a.status === "PAGA");
+  const colunas = comPagamento ? 9 : 6;
 
   // Código (#) da conta original de cada parcela, mostrado no selo "Parcelamento #12 · 2/3".
   const [parcelamentos, anexosExibidos, ativas] = await Promise.all([
@@ -72,11 +75,13 @@ export async function TabelaContas({ user, where, titulo, voltaTela }: { user: U
     <>
       {titulo && <h2 className="mb-2 text-sm font-semibold">{titulo} ({contas.length})</h2>}
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[860px]">
+        <table className={`w-full ${comPagamento ? "min-w-[1180px]" : "min-w-[860px]"}`}>
           <thead className="border-b border-line">
             <tr>
               <th className="th">#</th><th className="th">Vencimento</th><th className="th">Fornecedor / descrição</th>
-              <th className="th">Situação</th><th className="th text-right">Valor</th><th className="th text-right">Ações</th>
+              <th className="th">Situação</th>
+              {comPagamento && <><th className="th">Pago em</th><th className="th">Pago por</th><th className="th">Caixa</th></>}
+              <th className="th text-right">Valor</th><th className="th text-right">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -115,6 +120,13 @@ export async function TabelaContas({ user, where, titulo, voltaTela }: { user: U
                   {a.rejectionReason && <div className="mt-1 text-xs text-red-700">Motivo: {a.rejectionReason}</div>}
                   {a.status === "CANCELADA" && a.cancelReason && <div className="mt-1 text-xs text-red-700">Motivo: {a.cancelReason}</div>}
                 </td>
+                {comPagamento && (
+                  <>
+                    <td className="td whitespace-nowrap text-sm">{a.paidAt ? dateTimeBR(a.paidAt) : <span className="text-muted">—</span>}</td>
+                    <td className="td text-sm">{a.paidBy?.name ?? <span className="text-muted">—</span>}</td>
+                    <td className="td text-sm">{a.cashRegister?.name ?? <span className="text-muted">—</span>}</td>
+                  </>
+                )}
                 <td className="td text-right font-medium">{brl(a.amount)}</td>
                 <td className="td">
                   <div className="flex flex-wrap items-center justify-end gap-2">
@@ -172,12 +184,12 @@ export async function TabelaContas({ user, where, titulo, voltaTela }: { user: U
               );
             })}
             {contas.length === 0 && (
-              <tr><td colSpan={6} className="td py-8 text-center text-muted">Nenhuma conta encontrada com esses filtros.</td></tr>
+              <tr><td colSpan={colunas} className="td py-8 text-center text-muted">Nenhuma conta encontrada com esses filtros.</td></tr>
             )}
           </tbody>
           {contas.length > 0 && (
             <tfoot className="border-t border-line">
-              <tr><td colSpan={4} className="td text-right text-muted">Total ({contas.length})</td><td className="td text-right font-semibold">{brl(total)}</td><td /></tr>
+              <tr><td colSpan={colunas - 2} className="td text-right text-muted">Total ({contas.length})</td><td className="td text-right font-semibold">{brl(total)}</td><td /></tr>
             </tfoot>
           )}
         </table>
